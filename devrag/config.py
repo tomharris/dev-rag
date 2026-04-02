@@ -1,0 +1,88 @@
+from __future__ import annotations
+
+from dataclasses import dataclass, field, fields
+from pathlib import Path
+
+import yaml
+
+
+@dataclass
+class EmbeddingConfig:
+    model: str = "nomic-embed-text"
+    provider: str = "ollama"
+    ollama_url: str = "http://localhost:11434"
+    batch_size: int = 64
+
+
+@dataclass
+class VectorStoreConfig:
+    backend: str = "chromadb"
+    persist_dir: str = "~/.local/share/devrag/chroma"
+
+
+@dataclass
+class RetrievalConfig:
+    top_k: int = 20
+    final_k: int = 5
+    rerank: bool = True
+    reranker_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+
+
+@dataclass
+class CodeConfig:
+    chunk_max_tokens: int = 512
+    respect_gitignore: bool = True
+    exclude_patterns: list[str] = field(default_factory=lambda: [
+        "*.min.js",
+        "vendor/**",
+        "node_modules/**",
+        "*.lock",
+        "*.generated.*",
+    ])
+
+
+@dataclass
+class DevragConfig:
+    embedding: EmbeddingConfig = field(default_factory=EmbeddingConfig)
+    vector_store: VectorStoreConfig = field(default_factory=VectorStoreConfig)
+    retrieval: RetrievalConfig = field(default_factory=RetrievalConfig)
+    code: CodeConfig = field(default_factory=CodeConfig)
+
+
+def _merge_dict_into_dataclass(dc: object, overrides: dict) -> None:
+    """Recursively merge a dict of overrides into a dataclass instance."""
+    for key, value in overrides.items():
+        if not hasattr(dc, key):
+            continue
+        current = getattr(dc, key)
+        if isinstance(value, dict) and hasattr(current, "__dataclass_fields__"):
+            _merge_dict_into_dataclass(current, value)
+        else:
+            setattr(dc, key, value)
+
+
+def load_config(
+    project_dir: Path | None = None,
+    user_config_dir: Path | None = None,
+) -> DevragConfig:
+    """Load config with priority: project .devrag.yaml > user config > defaults."""
+    config = DevragConfig()
+
+    if user_config_dir is None:
+        xdg = Path.home() / ".config" / "devrag"
+        user_config_dir = xdg
+
+    user_config_path = user_config_dir / "devrag.yaml"
+    if user_config_path.exists():
+        with open(user_config_path) as f:
+            data = yaml.safe_load(f) or {}
+        _merge_dict_into_dataclass(config, data)
+
+    if project_dir is not None:
+        project_config_path = project_dir / ".devrag.yaml"
+        if project_config_path.exists():
+            with open(project_config_path) as f:
+                data = yaml.safe_load(f) or {}
+            _merge_dict_into_dataclass(config, data)
+
+    return config
