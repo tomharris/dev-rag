@@ -44,6 +44,13 @@ def test_load_config_no_file_returns_defaults(tmp_dir):
     assert config.embedding.model == "nomic-embed-text"
 
 
+def test_default_config_has_prs_section():
+    config = DevragConfig()
+    assert config.prs.github_token_env == "GITHUB_TOKEN"
+    assert config.prs.backfill_days == 90
+    assert config.prs.include_draft is False
+
+
 def test_load_config_user_dir_fallback(tmp_dir, monkeypatch):
     user_config_dir = tmp_dir / "user_config"
     user_config_dir.mkdir()

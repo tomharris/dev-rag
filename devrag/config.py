@@ -42,11 +42,19 @@ class CodeConfig:
 
 
 @dataclass
+class PrsConfig:
+    github_token_env: str = "GITHUB_TOKEN"
+    backfill_days: int = 90
+    include_draft: bool = False
+
+
+@dataclass
 class DevragConfig:
     embedding: EmbeddingConfig = field(default_factory=EmbeddingConfig)
     vector_store: VectorStoreConfig = field(default_factory=VectorStoreConfig)
     retrieval: RetrievalConfig = field(default_factory=RetrievalConfig)
     code: CodeConfig = field(default_factory=CodeConfig)
+    prs: PrsConfig = field(default_factory=PrsConfig)
 
 
 def _merge_dict_into_dataclass(dc: object, overrides: dict) -> None:
