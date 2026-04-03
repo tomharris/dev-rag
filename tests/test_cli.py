@@ -57,3 +57,19 @@ def test_cli_config_help():
 def test_cli_serve_help():
     result = runner.invoke(app, ["serve", "--help"])
     assert result.exit_code == 0
+
+
+def test_cli_reindex_help():
+    result = runner.invoke(app, ["reindex", "--help"])
+    assert result.exit_code == 0
+    assert "all" in result.stdout.lower()
+
+
+def test_cli_eval_run_help():
+    result = runner.invoke(app, ["eval", "run", "--help"])
+    assert result.exit_code == 0
+
+
+def test_cli_eval_compare_help():
+    result = runner.invoke(app, ["eval", "compare", "--help"])
+    assert result.exit_code == 0

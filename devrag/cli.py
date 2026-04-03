@@ -196,5 +196,88 @@ def serve():
     mcp.run()
 
 
+eval_app = typer.Typer(help="Evaluate retrieval quality.")
+app.add_typer(eval_app, name="eval")
+
+
+@app.command()
+def reindex(
+    all_collections: bool = typer.Option(False, "--all", help="Re-embed all collections"),
+):
+    """Re-index everything. Use after changing embedding models."""
+    from devrag.config import load_config
+    from devrag.stores.metadata_db import MetadataDB
+    if not all_collections:
+        typer.echo("Use --all to clear all indexes and force re-embedding.")
+        return
+    config = load_config(project_dir=Path.cwd())
+    db_dir = Path("~/.local/share/devrag").expanduser()
+    db_dir.mkdir(parents=True, exist_ok=True)
+    meta = MetadataDB(str(db_dir / "metadata.db"))
+    for file_path in meta.get_all_indexed_files():
+        meta.remove_file(file_path)
+    typer.echo("Cleared all file hashes. Run 'devrag index repo .' to re-index code.")
+
+
+@eval_app.command("run")
+def eval_run(
+    queries_file: str = typer.Argument(..., help="Path to test queries JSONL file"),
+    output: str = typer.Option("results.jsonl", help="Output file for results"),
+    top_k: int = typer.Option(5, help="Number of results per query"),
+):
+    """Run eval queries and compute metrics."""
+    from devrag.eval import load_test_queries, compute_metrics, save_results
+    from devrag.retrieve.query_router import QueryRouter
+    hybrid, reranker, config = _get_search_components()
+    router = QueryRouter()
+    test_cases = load_test_queries(Path(queries_file))
+    search_results_map: dict[str, list[dict]] = {}
+    all_results: list[dict] = []
+    for case in test_cases:
+        query = case["query"]
+        collections = router.route(query)
+        candidates = hybrid.search(query, top_k=config.retrieval.top_k, collections=collections)
+        if reranker and candidates:
+            results = reranker.rerank(query, candidates, top_k=top_k)
+        else:
+            results = candidates[:top_k]
+        result_metas = [r.metadata for r in results]
+        search_results_map[query] = result_metas
+        all_results.append({"query": query, "results": result_metas})
+    metrics = compute_metrics(test_cases, search_results_map, k=top_k)
+    save_results(all_results, Path(output))
+    typer.echo(f"Evaluated {metrics['num_queries']} queries:")
+    typer.echo(f"  Precision@{top_k}: {metrics[f'precision_at_{top_k}']:.3f}")
+    typer.echo(f"  Recall@{top_k}: {metrics[f'recall_at_{top_k}']:.3f}")
+    typer.echo(f"  MRR: {metrics['mrr']:.3f}")
+    typer.echo(f"Results saved to {output}")
+
+
+@eval_app.command("compare")
+def eval_compare(
+    file_a: str = typer.Argument(..., help="First results file"),
+    file_b: str = typer.Argument(..., help="Second results file"),
+):
+    """Compare two eval result files."""
+    from devrag.eval import load_results
+    results_a = load_results(Path(file_a))
+    results_b = load_results(Path(file_b))
+    typer.echo(f"File A: {len(results_a)} queries from {file_a}")
+    typer.echo(f"File B: {len(results_b)} queries from {file_b}")
+    queries_a = {r["query"] for r in results_a}
+    queries_b = {r["query"] for r in results_b}
+    common = queries_a & queries_b
+    typer.echo(f"Common queries: {len(common)}")
+    for q in sorted(common):
+        ra = next(r for r in results_a if r["query"] == q)
+        rb = next(r for r in results_b if r["query"] == q)
+        files_a = [m.get("file_path", m.get("pr_number", "?")) for m in ra.get("results", [])]
+        files_b = [m.get("file_path", m.get("pr_number", "?")) for m in rb.get("results", [])]
+        if files_a != files_b:
+            typer.echo(f"  CHANGED: {q}")
+            typer.echo(f"    A: {files_a[:3]}")
+            typer.echo(f"    B: {files_b[:3]}")
+
+
 if __name__ == "__main__":
     app()
