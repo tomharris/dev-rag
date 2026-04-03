@@ -1,0 +1,144 @@
+import hashlib
+from pathlib import Path
+from unittest.mock import MagicMock
+
+import pytest
+
+from devrag.ingest.code_indexer import (
+    LANGUAGE_EXTENSIONS,
+    CodeIndexer,
+    extract_chunks_from_file,
+)
+from devrag.types import Chunk
+
+
+def test_extract_chunks_from_python_file(sample_python_file):
+    chunks = extract_chunks_from_file(sample_python_file, max_tokens=512)
+    entity_names = [c.metadata["entity_name"] for c in chunks]
+    assert "FileProcessor" in entity_names or any(
+        c.metadata.get("parent_entity") == "FileProcessor" for c in chunks
+    )
+    assert "standalone_function" in entity_names
+
+    func_chunk = next(c for c in chunks if c.metadata["entity_name"] == "standalone_function")
+    assert func_chunk.metadata["language"] == "python"
+    assert func_chunk.metadata["entity_type"] in ("function", "function_definition")
+    assert "line_range" in func_chunk.metadata
+    assert "def standalone_function" in func_chunk.text
+
+
+def test_extract_chunks_from_typescript_file(sample_ts_file):
+    chunks = extract_chunks_from_file(sample_ts_file, max_tokens=512)
+    entity_names = [c.metadata["entity_name"] for c in chunks]
+    assert "Server" in entity_names or "loadConfig" in entity_names
+    assert any(c.metadata["language"] == "typescript" for c in chunks)
+
+
+def test_extract_chunks_unsupported_language(tmp_dir):
+    path = tmp_dir / "data.csv"
+    path.write_text("a,b,c\n1,2,3\n")
+    chunks = extract_chunks_from_file(path, max_tokens=512)
+    assert chunks == []
+
+
+def test_language_extensions_mapping():
+    assert LANGUAGE_EXTENSIONS[".py"] == "python"
+    assert LANGUAGE_EXTENSIONS[".ts"] == "typescript"
+    assert LANGUAGE_EXTENSIONS[".js"] == "javascript"
+    assert LANGUAGE_EXTENSIONS[".rs"] == "rust"
+    assert LANGUAGE_EXTENSIONS[".go"] == "go"
+
+
+def test_chunk_ids_are_deterministic(sample_python_file):
+    chunks1 = extract_chunks_from_file(sample_python_file, max_tokens=512)
+    chunks2 = extract_chunks_from_file(sample_python_file, max_tokens=512)
+    ids1 = [c.id for c in chunks1]
+    ids2 = [c.id for c in chunks2]
+    assert ids1 == ids2
+
+
+def test_chunk_text_includes_context(sample_python_file):
+    chunks = extract_chunks_from_file(sample_python_file, max_tokens=512)
+    method_chunks = [c for c in chunks if c.metadata.get("parent_entity") == "FileProcessor"]
+    if method_chunks:
+        assert any("FileProcessor" in c.text or "read_file" in c.text for c in method_chunks)
+
+
+# --- Integration tests for CodeIndexer class ---
+
+from devrag.ingest.code_indexer import CodeIndexer
+from devrag.stores.chroma_store import ChromaStore
+from devrag.stores.metadata_db import MetadataDB
+
+
+@pytest.fixture
+def indexer_deps(tmp_dir):
+    store = ChromaStore(persist_dir=str(tmp_dir / "chroma"))
+    meta = MetadataDB(str(tmp_dir / "meta.db"))
+    embedder = MagicMock()
+    embedder.embed = MagicMock(side_effect=lambda texts: [[0.1] * 768 for _ in texts])
+    return store, meta, embedder
+
+
+def test_code_indexer_indexes_repo(tmp_dir, indexer_deps):
+    store, meta, embedder = indexer_deps
+    repo = tmp_dir / "repo"
+    repo.mkdir()
+    import subprocess
+    subprocess.run(["git", "init", str(repo)], capture_output=True, check=True)
+    subprocess.run(["git", "config", "user.email", "t@t.com"], cwd=str(repo), capture_output=True)
+    subprocess.run(["git", "config", "user.name", "T"], cwd=str(repo), capture_output=True)
+    (repo / "main.py").write_text("def hello():\n    return 'world'\n")
+    (repo / "utils.py").write_text("def add(a, b):\n    return a + b\n")
+    subprocess.run(["git", "add", "."], cwd=str(repo), capture_output=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=str(repo), capture_output=True)
+    indexer = CodeIndexer(store, meta, embedder)
+    stats = indexer.index_repo(repo)
+    assert stats.files_scanned >= 2
+    assert stats.files_indexed >= 2
+    assert stats.chunks_created >= 2
+    assert store.count("code_chunks") >= 2
+
+
+def test_code_indexer_incremental_skips_unchanged(tmp_dir, indexer_deps):
+    store, meta, embedder = indexer_deps
+    repo = tmp_dir / "repo"
+    repo.mkdir()
+    import subprocess
+    subprocess.run(["git", "init", str(repo)], capture_output=True, check=True)
+    subprocess.run(["git", "config", "user.email", "t@t.com"], cwd=str(repo), capture_output=True)
+    subprocess.run(["git", "config", "user.name", "T"], cwd=str(repo), capture_output=True)
+    (repo / "main.py").write_text("def hello():\n    return 'world'\n")
+    subprocess.run(["git", "add", "."], cwd=str(repo), capture_output=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=str(repo), capture_output=True)
+    indexer = CodeIndexer(store, meta, embedder)
+    stats1 = indexer.index_repo(repo)
+    assert stats1.files_indexed >= 1
+    embedder.embed.reset_mock()
+    stats2 = indexer.index_repo(repo, incremental=True)
+    assert stats2.files_skipped >= 1
+    assert stats2.files_indexed == 0
+    embedder.embed.assert_not_called()
+
+
+def test_code_indexer_detects_removed_files(tmp_dir, indexer_deps):
+    store, meta, embedder = indexer_deps
+    repo = tmp_dir / "repo"
+    repo.mkdir()
+    import subprocess
+    subprocess.run(["git", "init", str(repo)], capture_output=True, check=True)
+    subprocess.run(["git", "config", "user.email", "t@t.com"], cwd=str(repo), capture_output=True)
+    subprocess.run(["git", "config", "user.name", "T"], cwd=str(repo), capture_output=True)
+    (repo / "main.py").write_text("def hello():\n    return 'world'\n")
+    (repo / "old.py").write_text("def old():\n    pass\n")
+    subprocess.run(["git", "add", "."], cwd=str(repo), capture_output=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=str(repo), capture_output=True)
+    indexer = CodeIndexer(store, meta, embedder)
+    indexer.index_repo(repo)
+    initial_count = store.count("code_chunks")
+    (repo / "old.py").unlink()
+    subprocess.run(["git", "add", "."], cwd=str(repo), capture_output=True)
+    subprocess.run(["git", "commit", "-m", "remove old"], cwd=str(repo), capture_output=True)
+    stats = indexer.index_repo(repo)
+    assert stats.files_removed >= 1
+    assert store.count("code_chunks") < initial_count

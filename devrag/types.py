@@ -1,0 +1,40 @@
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+
+
+@dataclass
+class Chunk:
+    """A single indexed chunk of code or text."""
+    id: str
+    text: str
+    metadata: dict[str, str | int | float | bool | list[str]]
+    embedding: list[float] | None = None
+
+
+@dataclass
+class SearchResult:
+    """A single search result with score and source chunk."""
+    chunk_id: str
+    text: str
+    score: float
+    metadata: dict[str, str | int | float | bool | list[str]]
+
+
+@dataclass
+class QueryResult:
+    """Results from a vector store query."""
+    ids: list[str]
+    documents: list[str]
+    metadatas: list[dict]
+    distances: list[float]
+
+
+@dataclass
+class IndexStats:
+    """Statistics from an indexing run."""
+    files_scanned: int = 0
+    files_indexed: int = 0
+    files_skipped: int = 0
+    files_removed: int = 0
+    chunks_created: int = 0
