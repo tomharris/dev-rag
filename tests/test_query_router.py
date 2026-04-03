@@ -46,3 +46,27 @@ def test_code_only_scope():
 
 def test_prs_only_scope():
     assert set(QueryRouter().route("how does auth work", scope="prs")) == {"pr_diffs", "pr_discussions"}
+
+
+def test_docs_query_policy():
+    router = QueryRouter()
+    assert "documents" in router.route("what is our API versioning policy")
+
+
+def test_docs_query_architecture():
+    router = QueryRouter()
+    assert "documents" in router.route("describe the system architecture")
+
+
+def test_docs_query_spec():
+    router = QueryRouter()
+    assert "documents" in router.route("what does the design spec say about caching")
+
+
+def test_docs_only_scope():
+    assert QueryRouter().route("anything", scope="docs") == ["documents"]
+
+
+def test_ambiguous_query_includes_docs():
+    router = QueryRouter()
+    assert "documents" in router.route("tell me about authentication")
