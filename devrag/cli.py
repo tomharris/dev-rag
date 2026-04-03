@@ -15,12 +15,10 @@ def _get_search_components():
     from devrag.ingest.embedder import OllamaEmbedder
     from devrag.retrieve.hybrid_search import HybridSearch
     from devrag.retrieve.reranker import Reranker
-    from devrag.stores.chroma_store import ChromaStore
+    from devrag.stores.factory import create_vector_store
     from devrag.stores.metadata_db import MetadataDB
     config = load_config(project_dir=Path.cwd())
-    persist_dir = Path(config.vector_store.persist_dir).expanduser()
-    persist_dir.mkdir(parents=True, exist_ok=True)
-    store = ChromaStore(persist_dir=str(persist_dir))
+    store = create_vector_store(config)
     db_dir = Path("~/.local/share/devrag").expanduser()
     db_dir.mkdir(parents=True, exist_ok=True)
     meta = MetadataDB(str(db_dir / "metadata.db"))
@@ -59,13 +57,11 @@ def index_repo(
     from devrag.config import load_config
     from devrag.ingest.code_indexer import CodeIndexer
     from devrag.ingest.embedder import OllamaEmbedder
-    from devrag.stores.chroma_store import ChromaStore
+    from devrag.stores.factory import create_vector_store
     from devrag.stores.metadata_db import MetadataDB
     from devrag.utils.formatters import format_index_stats
     config = load_config(project_dir=Path.cwd())
-    persist_dir = Path(config.vector_store.persist_dir).expanduser()
-    persist_dir.mkdir(parents=True, exist_ok=True)
-    store = ChromaStore(persist_dir=str(persist_dir))
+    store = create_vector_store(config)
     db_dir = Path("~/.local/share/devrag").expanduser()
     db_dir.mkdir(parents=True, exist_ok=True)
     meta = MetadataDB(str(db_dir / "metadata.db"))
@@ -84,13 +80,11 @@ def index_docs_cmd(
     from devrag.config import load_config
     from devrag.ingest.doc_indexer import DocIndexer
     from devrag.ingest.embedder import OllamaEmbedder
-    from devrag.stores.chroma_store import ChromaStore
+    from devrag.stores.factory import create_vector_store
     from devrag.stores.metadata_db import MetadataDB
     from devrag.utils.formatters import format_doc_index_stats
     config = load_config(project_dir=Path.cwd())
-    persist_dir = Path(config.vector_store.persist_dir).expanduser()
-    persist_dir.mkdir(parents=True, exist_ok=True)
-    store = ChromaStore(persist_dir=str(persist_dir))
+    store = create_vector_store(config)
     db_dir = Path("~/.local/share/devrag").expanduser()
     db_dir.mkdir(parents=True, exist_ok=True)
     meta = MetadataDB(str(db_dir / "metadata.db"))
@@ -110,7 +104,7 @@ def index_prs(
     from devrag.config import load_config
     from devrag.ingest.embedder import OllamaEmbedder
     from devrag.ingest.pr_indexer import PRIndexer
-    from devrag.stores.chroma_store import ChromaStore
+    from devrag.stores.factory import create_vector_store
     from devrag.stores.metadata_db import MetadataDB
     from devrag.utils.formatters import format_pr_sync_stats
     from devrag.utils.github import GitHubClient
@@ -119,9 +113,7 @@ def index_prs(
     if not token:
         typer.echo(f"Error: {config.prs.github_token_env} environment variable not set.", err=True)
         raise typer.Exit(1)
-    persist_dir = Path(config.vector_store.persist_dir).expanduser()
-    persist_dir.mkdir(parents=True, exist_ok=True)
-    store = ChromaStore(persist_dir=str(persist_dir))
+    store = create_vector_store(config)
     db_dir = Path("~/.local/share/devrag").expanduser()
     db_dir.mkdir(parents=True, exist_ok=True)
     meta = MetadataDB(str(db_dir / "metadata.db"))
@@ -137,14 +129,10 @@ def index_prs(
 def status():
     """Show indexing status."""
     from devrag.config import load_config
-    from devrag.stores.chroma_store import ChromaStore
+    from devrag.stores.factory import create_vector_store
     from devrag.stores.metadata_db import MetadataDB
     config = load_config(project_dir=Path.cwd())
-    persist_dir = Path(config.vector_store.persist_dir).expanduser()
-    if not persist_dir.exists():
-        typer.echo("No index found. Run 'devrag index repo .' first.")
-        return
-    store = ChromaStore(persist_dir=str(persist_dir))
+    store = create_vector_store(config)
     db_dir = Path("~/.local/share/devrag").expanduser()
     db_dir.mkdir(parents=True, exist_ok=True)
     meta = MetadataDB(str(db_dir / "metadata.db"))

@@ -13,7 +13,7 @@ from devrag.ingest.pr_indexer import PRIndexer
 from devrag.retrieve.hybrid_search import HybridSearch
 from devrag.retrieve.query_router import QueryRouter
 from devrag.retrieve.reranker import Reranker
-from devrag.stores.chroma_store import ChromaStore
+from devrag.stores.factory import create_vector_store
 from devrag.stores.metadata_db import MetadataDB
 from devrag.utils.formatters import format_doc_index_stats, format_index_stats, format_pr_sync_stats, format_search_results
 from devrag.utils.github import GitHubClient
@@ -21,7 +21,7 @@ from devrag.utils.github import GitHubClient
 mcp = FastMCP("DevRAG")
 
 _config: DevragConfig | None = None
-_vector_store: ChromaStore | None = None
+_vector_store = None
 _metadata_db: MetadataDB | None = None
 _embedder: OllamaEmbedder | None = None
 _reranker: Reranker | None = None
@@ -34,13 +34,10 @@ def _get_config() -> DevragConfig:
     return _config
 
 
-def _get_vector_store() -> ChromaStore:
+def _get_vector_store():
     global _vector_store
     if _vector_store is None:
-        config = _get_config()
-        persist_dir = Path(config.vector_store.persist_dir).expanduser()
-        persist_dir.mkdir(parents=True, exist_ok=True)
-        _vector_store = ChromaStore(persist_dir=str(persist_dir))
+        _vector_store = create_vector_store(_get_config())
     return _vector_store
 
 
