@@ -144,6 +144,12 @@ def status():
         f"PR discussion chunks: {store.count('pr_discussions')}",
         f"Document chunks: {store.count('documents')}",
     ]
+    stats = meta.get_query_stats()
+    if stats["total_queries"] > 0:
+        lines.append("")
+        lines.append(f"Query stats ({stats['total_queries']} queries):")
+        lines.append(f"  Avg latency: {stats['avg_total_ms']:.0f}ms")
+        lines.append(f"  Avg results: {stats['avg_result_count']:.1f}")
     typer.echo("\n".join(lines))
 
 

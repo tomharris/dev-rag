@@ -180,6 +180,10 @@ def status() -> str:
         f"PR discussion chunks: {pr_disc_count}",
         f"Document chunks: {doc_count}",
     ]
+    stats = meta.get_query_stats()
+    if stats["total_queries"] > 0:
+        lines.append(f"Queries logged: {stats['total_queries']}")
+        lines.append(f"Avg latency: {stats['avg_total_ms']:.0f}ms")
     return "\n".join(lines)
 
 
