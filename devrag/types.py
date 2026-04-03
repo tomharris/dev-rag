@@ -41,6 +41,14 @@ class IndexStats:
 
 
 @dataclass
+class DocIndexStats:
+    """Statistics from a document indexing run."""
+    files_scanned: int = 0
+    files_indexed: int = 0
+    chunks_created: int = 0
+
+
+@dataclass
 class PRSyncStats:
     """Statistics from a PR sync run."""
     prs_fetched: int = 0
