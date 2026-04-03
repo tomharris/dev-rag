@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from fastmcp import FastMCP
@@ -7,11 +8,14 @@ from fastmcp import FastMCP
 from devrag.config import DevragConfig, load_config
 from devrag.ingest.code_indexer import CodeIndexer
 from devrag.ingest.embedder import OllamaEmbedder
+from devrag.ingest.pr_indexer import PRIndexer
 from devrag.retrieve.hybrid_search import HybridSearch
+from devrag.retrieve.query_router import QueryRouter
 from devrag.retrieve.reranker import Reranker
 from devrag.stores.chroma_store import ChromaStore
 from devrag.stores.metadata_db import MetadataDB
-from devrag.utils.formatters import format_index_stats, format_search_results
+from devrag.utils.formatters import format_index_stats, format_pr_sync_stats, format_search_results
+from devrag.utils.github import GitHubClient
 
 mcp = FastMCP("DevRAG")
 
@@ -69,20 +73,24 @@ def _get_reranker() -> Reranker:
 
 
 @mcp.tool
-def search(query: str, top_k: int = 5) -> str:
-    """Search indexed code using hybrid retrieval (semantic + keyword).
+def search(query: str, scope: str = "all", top_k: int = 5) -> str:
+    """Search code, PRs, and docs using hybrid retrieval.
 
-    Returns the most relevant code chunks matching the query,
-    with file paths and code snippets.
+    Args:
+        query: The search query.
+        scope: What to search. "all" auto-routes by intent,
+               "code" searches code only, "prs" searches PRs only.
+        top_k: Number of results to return.
     """
     config = _get_config()
+    router = QueryRouter()
+    collections = router.route(query, scope=scope)
     hybrid = HybridSearch(
         vector_store=_get_vector_store(),
         metadata_db=_get_metadata_db(),
         embedder=_get_embedder(),
-        collection="code_chunks",
     )
-    candidates = hybrid.search(query, top_k=config.retrieval.top_k)
+    candidates = hybrid.search(query, top_k=config.retrieval.top_k, collections=collections)
     if config.retrieval.rerank and candidates:
         reranker = _get_reranker()
         results = reranker.rerank(query, candidates, top_k=top_k)
@@ -113,15 +121,43 @@ def index_repo(path: str = ".", incremental: bool = True) -> str:
 
 
 @mcp.tool
+def sync_prs(repo: str, since_days: int = 90) -> str:
+    """Sync GitHub PRs for a repository.
+
+    Fetches PR diffs, descriptions, and review comments, then indexes
+    them for search. Uses cursor-based sync to avoid re-fetching.
+
+    Requires GITHUB_TOKEN environment variable.
+    """
+    config = _get_config()
+    token = os.environ.get(config.prs.github_token_env)
+    if not token:
+        return f"Error: {config.prs.github_token_env} environment variable not set."
+    github = GitHubClient(token=token)
+    indexer = PRIndexer(
+        vector_store=_get_vector_store(),
+        metadata_db=_get_metadata_db(),
+        embedder=_get_embedder(),
+        github_client=github,
+    )
+    stats = indexer.sync(repo, since_days=since_days)
+    return format_pr_sync_stats(stats)
+
+
+@mcp.tool
 def status() -> str:
-    """Show indexing status: number of files and chunks indexed."""
+    """Show indexing status: number of files, chunks, and PRs indexed."""
     store = _get_vector_store()
     meta = _get_metadata_db()
     chunk_count = store.count("code_chunks")
+    pr_diff_count = store.count("pr_diffs")
+    pr_disc_count = store.count("pr_discussions")
     indexed_files = meta.get_all_indexed_files()
     lines = [
         f"Indexed files: {len(indexed_files)}",
         f"Code chunks: {chunk_count}",
+        f"PR diff chunks: {pr_diff_count}",
+        f"PR discussion chunks: {pr_disc_count}",
     ]
     return "\n".join(lines)
 

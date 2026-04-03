@@ -74,6 +74,38 @@ def test_fts_delete(tmp_dir):
     assert len(results) == 0
 
 
+def test_pr_sync_cursor_set_and_get(tmp_dir):
+    db = MetadataDB(str(tmp_dir / "meta.db"))
+    db.set_pr_sync_cursor("acme/backend", "2026-03-15T10:00:00Z")
+    assert db.get_pr_sync_cursor("acme/backend") == "2026-03-15T10:00:00Z"
+    assert db.get_pr_sync_cursor("other/repo") is None
+
+
+def test_pr_sync_cursor_update(tmp_dir):
+    db = MetadataDB(str(tmp_dir / "meta.db"))
+    db.set_pr_sync_cursor("acme/backend", "2026-03-01T00:00:00Z")
+    db.set_pr_sync_cursor("acme/backend", "2026-03-15T10:00:00Z")
+    assert db.get_pr_sync_cursor("acme/backend") == "2026-03-15T10:00:00Z"
+
+
+def test_pr_chunk_source_mapping(tmp_dir):
+    db = MetadataDB(str(tmp_dir / "meta.db"))
+    db.set_pr_chunk_source("chunk_pr_1", "acme/backend", 1234)
+    db.set_pr_chunk_source("chunk_pr_2", "acme/backend", 1234)
+    db.set_pr_chunk_source("chunk_pr_3", "acme/backend", 5678)
+    chunks = db.get_chunks_for_pr("acme/backend", 1234)
+    assert set(chunks) == {"chunk_pr_1", "chunk_pr_2"}
+
+
+def test_delete_chunks_for_pr(tmp_dir):
+    db = MetadataDB(str(tmp_dir / "meta.db"))
+    db.set_pr_chunk_source("c1", "acme/backend", 100)
+    db.upsert_fts("c1", "some pr text")
+    db.delete_chunks_for_pr("acme/backend", 100)
+    assert db.get_chunks_for_pr("acme/backend", 100) == []
+    assert db.search_fts("some pr text", limit=5) == []
+
+
 def test_delete_fts_for_file(tmp_dir):
     db = MetadataDB(str(tmp_dir / "meta.db"))
     db.set_chunk_source("c1", "foo.py", 1, 10)

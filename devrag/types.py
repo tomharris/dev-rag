@@ -38,3 +38,12 @@ class IndexStats:
     files_skipped: int = 0
     files_removed: int = 0
     chunks_created: int = 0
+
+
+@dataclass
+class PRSyncStats:
+    """Statistics from a PR sync run."""
+    prs_fetched: int = 0
+    prs_indexed: int = 0
+    prs_skipped: int = 0
+    chunks_created: int = 0
