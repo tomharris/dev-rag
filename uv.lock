@@ -542,6 +542,7 @@ dependencies = [
     { name = "sentence-transformers" },
     { name = "tree-sitter" },
     { name = "tree-sitter-language-pack" },
+    { name = "typer" },
 ]
 
 [package.optional-dependencies]
@@ -564,6 +565,7 @@ requires-dist = [
     { name = "sentence-transformers", specifier = ">=3.0.0" },
     { name = "tree-sitter", specifier = ">=0.23.0" },
     { name = "tree-sitter-language-pack", specifier = ">=0.21.0" },
+    { name = "typer", specifier = ">=0.12.0" },
 ]
 provides-extras = ["dev"]
 

@@ -49,3 +49,16 @@ def test_discover_files_applies_exclude_patterns(git_repo):
 def test_discover_files_nonexistent_dir():
     files = discover_files(Path("/nonexistent"), exclude_patterns=[])
     assert files == []
+
+
+def test_discover_files_respects_devragignore(git_repo):
+    (git_repo / ".devragignore").write_text("*.md\nsrc/data.min.js\n")
+    import subprocess
+    subprocess.run(["git", "add", ".devragignore"], cwd=str(git_repo), capture_output=True)
+    subprocess.run(["git", "commit", "-m", "add devragignore"], cwd=str(git_repo), capture_output=True)
+    files = discover_files(git_repo, exclude_patterns=[])
+    rel_paths = {str(f.relative_to(git_repo)) for f in files}
+    assert "src/main.py" in rel_paths
+    assert "src/utils.py" in rel_paths
+    assert "README.md" not in rel_paths
+    assert "src/data.min.js" not in rel_paths

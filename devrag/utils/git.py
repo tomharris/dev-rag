@@ -12,6 +12,16 @@ def discover_files(
     if not repo_path.exists():
         return []
 
+    # Read .devragignore patterns
+    devragignore = repo_path / ".devragignore"
+    extra_excludes: list[str] = []
+    if devragignore.exists():
+        for line in devragignore.read_text().splitlines():
+            line = line.strip()
+            if line and not line.startswith("#"):
+                extra_excludes.append(line)
+    all_excludes = list(exclude_patterns) + extra_excludes
+
     try:
         result = subprocess.run(
             ["git", "ls-files", "--cached", "--others", "--exclude-standard"],
@@ -31,7 +41,7 @@ def discover_files(
     filtered: list[Path] = []
     for rel in rel_paths:
         if any(fnmatch.fnmatch(rel, pat) or fnmatch.fnmatch(Path(rel).name, pat)
-               for pat in exclude_patterns):
+               for pat in all_excludes):
             continue
         full = repo_path / rel
         if full.is_file():

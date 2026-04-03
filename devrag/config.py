@@ -49,12 +49,22 @@ class PrsConfig:
 
 
 @dataclass
+class DocumentsConfig:
+    glob_patterns: list[str] = field(default_factory=lambda: [
+        "**/*.md", "**/*.mdx", "**/*.txt", "**/*.rst", "**/*.html", "**/*.adoc",
+    ])
+    chunk_max_tokens: int = 512
+    chunk_overlap_tokens: int = 50
+
+
+@dataclass
 class DevragConfig:
     embedding: EmbeddingConfig = field(default_factory=EmbeddingConfig)
     vector_store: VectorStoreConfig = field(default_factory=VectorStoreConfig)
     retrieval: RetrievalConfig = field(default_factory=RetrievalConfig)
     code: CodeConfig = field(default_factory=CodeConfig)
     prs: PrsConfig = field(default_factory=PrsConfig)
+    documents: DocumentsConfig = field(default_factory=DocumentsConfig)
 
 
 def _merge_dict_into_dataclass(dc: object, overrides: dict) -> None:

@@ -51,6 +51,14 @@ def test_default_config_has_prs_section():
     assert config.prs.include_draft is False
 
 
+def test_default_config_has_documents_section():
+    config = DevragConfig()
+    assert "**/*.md" in config.documents.glob_patterns
+    assert "**/*.txt" in config.documents.glob_patterns
+    assert config.documents.chunk_max_tokens == 512
+    assert config.documents.chunk_overlap_tokens == 50
+
+
 def test_load_config_user_dir_fallback(tmp_dir, monkeypatch):
     user_config_dir = tmp_dir / "user_config"
     user_config_dir.mkdir()

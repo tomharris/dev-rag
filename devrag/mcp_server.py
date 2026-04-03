@@ -7,6 +7,7 @@ from fastmcp import FastMCP
 
 from devrag.config import DevragConfig, load_config
 from devrag.ingest.code_indexer import CodeIndexer
+from devrag.ingest.doc_indexer import DocIndexer
 from devrag.ingest.embedder import OllamaEmbedder
 from devrag.ingest.pr_indexer import PRIndexer
 from devrag.retrieve.hybrid_search import HybridSearch
@@ -14,7 +15,7 @@ from devrag.retrieve.query_router import QueryRouter
 from devrag.retrieve.reranker import Reranker
 from devrag.stores.chroma_store import ChromaStore
 from devrag.stores.metadata_db import MetadataDB
-from devrag.utils.formatters import format_index_stats, format_pr_sync_stats, format_search_results
+from devrag.utils.formatters import format_doc_index_stats, format_index_stats, format_pr_sync_stats, format_search_results
 from devrag.utils.github import GitHubClient
 
 mcp = FastMCP("DevRAG")
@@ -121,6 +122,27 @@ def index_repo(path: str = ".", incremental: bool = True) -> str:
 
 
 @mcp.tool
+def index_docs(path: str, glob: str = "**/*.md") -> str:
+    """Index a directory of documents for search.
+
+    Supports Markdown, text, RST, HTML, and AsciiDoc files.
+    Splits documents by section headings for precise retrieval.
+    """
+    docs_path = Path(path).resolve()
+    if not docs_path.exists():
+        return f"Error: path '{path}' does not exist."
+    glob_patterns = [g.strip() for g in glob.split(",")]
+    indexer = DocIndexer(
+        vector_store=_get_vector_store(),
+        metadata_db=_get_metadata_db(),
+        embedder=_get_embedder(),
+        config=_get_config(),
+    )
+    stats = indexer.index_docs(docs_path, glob_patterns=glob_patterns)
+    return format_doc_index_stats(stats)
+
+
+@mcp.tool
 def sync_prs(repo: str, since_days: int = 90) -> str:
     """Sync GitHub PRs for a repository.
 
@@ -146,18 +168,20 @@ def sync_prs(repo: str, since_days: int = 90) -> str:
 
 @mcp.tool
 def status() -> str:
-    """Show indexing status: number of files, chunks, and PRs indexed."""
+    """Show indexing status: files, code chunks, PRs, and documents."""
     store = _get_vector_store()
     meta = _get_metadata_db()
     chunk_count = store.count("code_chunks")
     pr_diff_count = store.count("pr_diffs")
     pr_disc_count = store.count("pr_discussions")
+    doc_count = store.count("documents")
     indexed_files = meta.get_all_indexed_files()
     lines = [
         f"Indexed files: {len(indexed_files)}",
         f"Code chunks: {chunk_count}",
         f"PR diff chunks: {pr_diff_count}",
         f"PR discussion chunks: {pr_disc_count}",
+        f"Document chunks: {doc_count}",
     ]
     return "\n".join(lines)
 
