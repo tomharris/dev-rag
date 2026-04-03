@@ -18,6 +18,8 @@ class EmbeddingConfig:
 class VectorStoreConfig:
     backend: str = "chromadb"
     persist_dir: str = "~/.local/share/devrag/chroma"
+    qdrant_url: str = "http://localhost:6333"
+    embedding_dim: int = 768
 
 
 @dataclass
