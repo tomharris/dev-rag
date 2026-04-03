@@ -45,6 +45,19 @@ class MetadataDB:
 
             CREATE INDEX IF NOT EXISTS idx_pr_chunk_sources_repo_pr
                 ON pr_chunk_sources(repo, pr_number);
+
+            CREATE TABLE IF NOT EXISTS query_metrics (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                query TEXT NOT NULL,
+                collections TEXT NOT NULL,
+                vector_ms REAL,
+                bm25_ms REAL,
+                rerank_ms REAL,
+                total_ms REAL,
+                result_count INTEGER,
+                classification TEXT,
+                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
         """)
         self._conn.commit()
 
@@ -143,6 +156,34 @@ class MetadataDB:
                 chunk_ids,
             )
             self._conn.commit()
+
+    def log_query_metric(self, query: str, collections: list[str], vector_ms: float,
+                         bm25_ms: float, rerank_ms: float, total_ms: float,
+                         result_count: int, classification: str) -> None:
+        self._conn.execute(
+            "INSERT INTO query_metrics (query, collections, vector_ms, bm25_ms, rerank_ms, total_ms, result_count, classification) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (query, ",".join(collections), vector_ms, bm25_ms, rerank_ms, total_ms, result_count, classification),
+        )
+        self._conn.commit()
+
+    def get_query_metrics(self, limit: int = 100) -> list[dict]:
+        rows = self._conn.execute(
+            "SELECT query, collections, vector_ms, bm25_ms, rerank_ms, total_ms, result_count, classification, timestamp "
+            "FROM query_metrics ORDER BY timestamp DESC LIMIT ?", (limit,),
+        ).fetchall()
+        return [{"query": r[0], "collections": r[1], "vector_ms": r[2], "bm25_ms": r[3],
+                 "rerank_ms": r[4], "total_ms": r[5], "result_count": r[6],
+                 "classification": r[7], "timestamp": r[8]} for r in rows]
+
+    def get_query_stats(self) -> dict:
+        row = self._conn.execute(
+            "SELECT COUNT(*), AVG(total_ms), AVG(result_count), AVG(vector_ms), AVG(bm25_ms), AVG(rerank_ms) "
+            "FROM query_metrics"
+        ).fetchone()
+        return {"total_queries": row[0], "avg_total_ms": row[1] or 0.0,
+                "avg_result_count": row[2] or 0.0, "avg_vector_ms": row[3] or 0.0,
+                "avg_bm25_ms": row[4] or 0.0, "avg_rerank_ms": row[5] or 0.0}
 
     def close(self) -> None:
         self._conn.close()
