@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from devrag.types import IndexStats, PRSyncStats, SearchResult
+from devrag.types import DocIndexStats, IndexStats, PRSyncStats, SearchResult
 
 
 def format_search_results(results: list[SearchResult]) -> str:
@@ -22,6 +22,21 @@ def format_search_results(results: list[SearchResult]) -> str:
             else:
                 lines.append(f"### {i}. [PR #{pr_num}] {pr_title} — {file_path}")
             lines.append("```diff")
+            text_lines = r.text.strip().split("\n")
+            preview = "\n".join(text_lines[:10])
+            if len(text_lines) > 10:
+                preview += "\n# ... (truncated)"
+            lines.append(preview)
+            lines.append("```")
+            lines.append("")
+        elif chunk_type == "document":
+            file_path = r.metadata.get("file_path", "unknown")
+            section_path = r.metadata.get("section_path", "")
+            entity_name = r.metadata.get("entity_name", section_path)
+            lines.append(f"### {i}. [{entity_name}] {file_path}")
+            if section_path:
+                lines.append(f"*Section: {section_path}*")
+            lines.append("```")
             text_lines = r.text.strip().split("\n")
             preview = "\n".join(text_lines[:10])
             if len(text_lines) > 10:
@@ -58,6 +73,10 @@ def format_index_stats(stats: IndexStats) -> str:
     if stats.files_removed:
         parts.append(f"Removed {stats.files_removed} deleted files")
     return ". ".join(parts) + "."
+
+
+def format_doc_index_stats(stats: DocIndexStats) -> str:
+    return f"Scanned {stats.files_scanned} files. Indexed {stats.files_indexed} files ({stats.chunks_created} chunks)."
 
 
 def format_pr_sync_stats(stats: PRSyncStats) -> str:

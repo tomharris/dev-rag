@@ -1,4 +1,4 @@
-from devrag.utils.formatters import format_search_results, format_index_stats, format_pr_sync_stats
+from devrag.utils.formatters import format_search_results, format_index_stats, format_pr_sync_stats, format_doc_index_stats
 from devrag.types import SearchResult, IndexStats
 
 
@@ -53,3 +53,32 @@ def test_format_pr_sync_stats():
     assert "50" in output
     assert "45" in output
     assert "200" in output
+
+
+def test_format_search_results_with_document():
+    results = [
+        SearchResult(
+            chunk_id="doc1",
+            text="Use Bearer tokens for all API requests.",
+            score=0.9,
+            metadata={
+                "file_path": "docs/api.md",
+                "chunk_type": "document",
+                "section_path": "API Guide > Authentication",
+                "entity_name": "Authentication",
+            },
+        ),
+    ]
+    output = format_search_results(results)
+    assert "API Guide > Authentication" in output or "Authentication" in output
+    assert "docs/api.md" in output
+    assert "Bearer tokens" in output
+
+
+def test_format_doc_index_stats():
+    from devrag.types import DocIndexStats
+    stats = DocIndexStats(files_scanned=10, files_indexed=8, chunks_created=42)
+    output = format_doc_index_stats(stats)
+    assert "10" in output
+    assert "8" in output
+    assert "42" in output
