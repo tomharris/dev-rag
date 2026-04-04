@@ -90,11 +90,10 @@ def test_embed_filters_empty_texts():
 
 @respx.mock
 def test_embed_all_empty_texts():
-    """All-empty input returns empty lists without calling API."""
+    """All-empty input returns empty list without calling API."""
     embedder = OllamaEmbedder(model="nomic-embed-text", ollama_url="http://localhost:11434")
     result = embedder.embed(["", "  ", "\n"])
-    assert len(result) == 3
-    assert all(v == [] for v in result)
+    assert result == []
 
 
 @respx.mock

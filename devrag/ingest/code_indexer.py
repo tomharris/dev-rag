@@ -374,6 +374,8 @@ def _whole_file_chunk(
     """Return a single whole-file Chunk when no entity nodes are found."""
     str_file_path = str(file_path)
     text = source.decode("utf-8", errors="replace")
+    if not text.strip():
+        return []
     max_chars = max_tokens * CHARS_PER_TOKEN
     if len(text) > max_chars:
         text = text[:max_chars] + "\n# ... (truncated)"
@@ -506,6 +508,10 @@ class CodeIndexer:
         file_path: str,
         file_hash: str,
     ) -> None:
+        chunks = [c for c in chunks if c.text.strip()]
+        if not chunks:
+            return
+
         # Remove old chunks for this file first (handles re-indexing)
         old_chunk_ids = self._meta.get_chunks_for_file(file_path)
         if old_chunk_ids:

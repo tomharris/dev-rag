@@ -29,7 +29,8 @@ class OllamaEmbedder:
             logger.warning("Skipping empty texts at indices %s", empty_indices)
 
         if not non_empty_indices:
-            return [[] for _ in texts]
+            logger.warning("All %d texts are empty; returning no embeddings", len(texts))
+            return []
 
         non_empty_texts = [texts[i] for i in non_empty_indices]
 
