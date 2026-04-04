@@ -1,5 +1,11 @@
 from __future__ import annotations
+import uuid
 from devrag.types import QueryResult
+
+
+def _to_uuid(string_id: str) -> str:
+    """Convert a string ID to a deterministic UUID5 for Qdrant compatibility."""
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, string_id))
 
 try:
     from qdrant_client import QdrantClient
@@ -33,7 +39,8 @@ class QdrantStore:
         for i, doc_id in enumerate(ids):
             payload = dict(metadatas[i]) if metadatas[i] else {}
             payload["_document"] = documents[i]
-            points.append(PointStruct(id=doc_id, vector=embeddings[i], payload=payload))
+            payload["_original_id"] = doc_id
+            points.append(PointStruct(id=_to_uuid(doc_id), vector=embeddings[i], payload=payload))
         self._client.upsert(collection_name=collection, points=points, wait=True)
 
     def query(self, collection: str, query_embedding: list[float],
@@ -50,9 +57,10 @@ class QdrantStore:
         )
         ids, documents, metadatas, distances = [], [], [], []
         for point in results:
-            ids.append(str(point.id))
             payload = dict(point.payload) if point.payload else {}
+            original_id = payload.pop("_original_id", str(point.id))
             doc = payload.pop("_document", "")
+            ids.append(original_id)
             documents.append(doc)
             metadatas.append(payload)
             distances.append(point.score)
@@ -61,7 +69,8 @@ class QdrantStore:
     def delete(self, collection: str, ids: list[str]) -> None:
         if not self._client.collection_exists(collection):
             return
-        self._client.delete(collection_name=collection, points_selector=PointIdsList(points=ids), wait=True)
+        qdrant_ids = [_to_uuid(id) for id in ids]
+        self._client.delete(collection_name=collection, points_selector=PointIdsList(points=qdrant_ids), wait=True)
 
     def count(self, collection: str) -> int:
         if not self._client.collection_exists(collection):
