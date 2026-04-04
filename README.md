@@ -15,9 +15,24 @@ PR history is a first-class data source — encoding *why* code changed, not jus
 ### Install
 
 ```bash
-pip install devrag
-# or
+# As a global CLI tool (recommended)
+uv tool install devrag
+
+# Or run without installing
+uvx devrag --help
+
+# Or add as a project dependency
 uv add devrag
+# pip install devrag
+```
+
+For development (from source):
+
+```bash
+git clone https://github.com/tomharris/dev-rag.git
+cd dev-rag
+uv sync
+uv run devrag --help
 ```
 
 ### Index and Search
@@ -180,11 +195,13 @@ embedding:
   provider: ollama               # ollama or sentence-transformers
   ollama_url: http://localhost:11434
   batch_size: 64
+  max_tokens: 8192                   # Truncation limit for embedding context
 
 vector_store:
   backend: chromadb              # chromadb or qdrant
   persist_dir: ~/.local/share/devrag/chroma
   qdrant_url: http://localhost:6333  # if backend: qdrant
+  embedding_dim: 768                 # Vector dimensionality
 
 retrieval:
   top_k: 20                     # Candidates before reranking
@@ -206,6 +223,7 @@ prs:
   github_token_env: GITHUB_TOKEN  # Env var name (token never stored in config)
   backfill_days: 90
   include_draft: false
+  chunk_max_tokens: 512              # Max tokens per PR chunk
 
 documents:
   glob_patterns: ["**/*.md", "**/*.mdx", "**/*.txt", "**/*.rst", "**/*.html", "**/*.adoc"]
