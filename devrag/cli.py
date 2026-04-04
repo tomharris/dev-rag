@@ -66,7 +66,7 @@ def index_repo(
     db_dir.mkdir(parents=True, exist_ok=True)
     meta = MetadataDB(str(db_dir / "metadata.db"))
     embedder = OllamaEmbedder(model=config.embedding.model, ollama_url=config.embedding.ollama_url, batch_size=config.embedding.batch_size)
-    indexer = CodeIndexer(store, meta, embedder, config)
+    indexer = CodeIndexer(store, meta, embedder, config.code)
     stats = indexer.index_repo(Path(path).resolve(), incremental=not full)
     typer.echo(format_index_stats(stats))
 
