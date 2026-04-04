@@ -306,12 +306,12 @@ def extract_chunks_from_file(
     target_types = ENTITY_NODE_TYPES.get(language)
     if not target_types:
         # Fallback: whole-file chunk
-        return _whole_file_chunk(file_path, source, language, repo_name)
+        return _whole_file_chunk(file_path, source, language, repo_name, max_tokens)
 
     entity_nodes = _collect_entity_nodes(tree.root_node, target_types, language)
 
     if not entity_nodes:
-        return _whole_file_chunk(file_path, source, language, repo_name)
+        return _whole_file_chunk(file_path, source, language, repo_name, max_tokens)
 
     chunks: list[Chunk] = []
     str_file_path = str(file_path)
@@ -328,6 +328,8 @@ def extract_chunks_from_file(
         line_end = node.end_point[0] + 1
 
         raw_text = _node_to_text(node, source)
+        if not raw_text.strip():
+            continue
 
         # Add class context prefix for methods
         if parent_class:
@@ -367,10 +369,14 @@ def _whole_file_chunk(
     source: bytes,
     language: str,
     repo_name: str,
+    max_tokens: int = 512,
 ) -> list[Chunk]:
     """Return a single whole-file Chunk when no entity nodes are found."""
     str_file_path = str(file_path)
     text = source.decode("utf-8", errors="replace")
+    max_chars = max_tokens * CHARS_PER_TOKEN
+    if len(text) > max_chars:
+        text = text[:max_chars] + "\n# ... (truncated)"
     chunk_id = _make_chunk_id(str_file_path, "__file__", 1)
     metadata: dict[str, Any] = {
         "file_path": str_file_path,

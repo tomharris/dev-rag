@@ -1,9 +1,10 @@
 import hashlib
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
+from devrag.ingest import code_indexer as code_indexer_mod
 from devrag.ingest.code_indexer import (
     LANGUAGE_EXTENSIONS,
     CodeIndexer,
@@ -119,6 +120,35 @@ def test_code_indexer_incremental_skips_unchanged(tmp_dir, indexer_deps):
     assert stats2.files_skipped >= 1
     assert stats2.files_indexed == 0
     embedder.embed.assert_not_called()
+
+
+def test_extract_chunks_skips_empty_text_nodes(tmp_dir):
+    """Nodes whose source text is empty/whitespace-only should be excluded."""
+    code = "def foo():\n    return 1\n\ndef bar():\n    return 2\n"
+    p = tmp_dir / "test.py"
+    p.write_text(code)
+
+    # Baseline: both functions produce chunks
+    normal_chunks = extract_chunks_from_file(p, max_tokens=512)
+    assert len(normal_chunks) == 2
+
+    # Simulate an empty-text node by patching _node_to_text to return
+    # whitespace for the first entity while leaving the rest unchanged.
+    original_fn = code_indexer_mod._node_to_text
+    call_count = 0
+
+    def _fake_node_to_text(node, source):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return "   "
+        return original_fn(node, source)
+
+    with patch.object(code_indexer_mod, "_node_to_text", side_effect=_fake_node_to_text):
+        filtered_chunks = extract_chunks_from_file(p, max_tokens=512)
+
+    assert len(filtered_chunks) == 1
+    assert filtered_chunks[0].metadata["entity_name"] == "bar"
 
 
 def test_code_indexer_detects_removed_files(tmp_dir, indexer_deps):

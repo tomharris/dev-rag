@@ -25,6 +25,8 @@ def chunk_pr(pr: dict, files: list[dict], comments: list[dict], repo: str) -> li
     title = pr["title"] or ""
     body = pr.get("body") or ""
     desc_text = f"# PR #{pr['number']}: {title}\n\n{body}".strip()
+    if not desc_text:
+        desc_text = f"PR #{pr['number']}"
     chunks.append(Chunk(
         id=_make_pr_chunk_id(repo, pr["number"], "description", 0),
         text=desc_text,
