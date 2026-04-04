@@ -22,7 +22,7 @@ def _get_search_components():
     db_dir = Path("~/.local/share/devrag").expanduser()
     db_dir.mkdir(parents=True, exist_ok=True)
     meta = MetadataDB(str(db_dir / "metadata.db"))
-    embedder = OllamaEmbedder(model=config.embedding.model, ollama_url=config.embedding.ollama_url, batch_size=config.embedding.batch_size)
+    embedder = OllamaEmbedder(model=config.embedding.model, ollama_url=config.embedding.ollama_url, batch_size=config.embedding.batch_size, max_tokens=config.embedding.max_tokens)
     hybrid = HybridSearch(store, meta, embedder)
     reranker = Reranker(model_name=config.retrieval.reranker_model) if config.retrieval.rerank else None
     return hybrid, reranker, config
@@ -65,7 +65,7 @@ def index_repo(
     db_dir = Path("~/.local/share/devrag").expanduser()
     db_dir.mkdir(parents=True, exist_ok=True)
     meta = MetadataDB(str(db_dir / "metadata.db"))
-    embedder = OllamaEmbedder(model=config.embedding.model, ollama_url=config.embedding.ollama_url, batch_size=config.embedding.batch_size)
+    embedder = OllamaEmbedder(model=config.embedding.model, ollama_url=config.embedding.ollama_url, batch_size=config.embedding.batch_size, max_tokens=config.embedding.max_tokens)
     indexer = CodeIndexer(store, meta, embedder, config.code)
     stats = indexer.index_repo(Path(path).resolve(), incremental=not full)
     typer.echo(format_index_stats(stats))
@@ -88,7 +88,7 @@ def index_docs_cmd(
     db_dir = Path("~/.local/share/devrag").expanduser()
     db_dir.mkdir(parents=True, exist_ok=True)
     meta = MetadataDB(str(db_dir / "metadata.db"))
-    embedder = OllamaEmbedder(model=config.embedding.model, ollama_url=config.embedding.ollama_url, batch_size=config.embedding.batch_size)
+    embedder = OllamaEmbedder(model=config.embedding.model, ollama_url=config.embedding.ollama_url, batch_size=config.embedding.batch_size, max_tokens=config.embedding.max_tokens)
     glob_patterns = [g.strip() for g in glob.split(",")]
     indexer = DocIndexer(store, meta, embedder, config)
     stats = indexer.index_docs(Path(path).resolve(), glob_patterns=glob_patterns)
@@ -117,10 +117,10 @@ def index_prs(
     db_dir = Path("~/.local/share/devrag").expanduser()
     db_dir.mkdir(parents=True, exist_ok=True)
     meta = MetadataDB(str(db_dir / "metadata.db"))
-    embedder = OllamaEmbedder(model=config.embedding.model, ollama_url=config.embedding.ollama_url, batch_size=config.embedding.batch_size)
+    embedder = OllamaEmbedder(model=config.embedding.model, ollama_url=config.embedding.ollama_url, batch_size=config.embedding.batch_size, max_tokens=config.embedding.max_tokens)
     days = int(since.rstrip("d"))
     github = GitHubClient(token=token)
-    indexer = PRIndexer(store, meta, embedder, github)
+    indexer = PRIndexer(store, meta, embedder, github, chunk_max_tokens=config.prs.chunk_max_tokens)
     stats = indexer.sync(repo, since_days=days)
     typer.echo(format_pr_sync_stats(stats))
 

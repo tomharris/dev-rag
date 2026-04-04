@@ -58,6 +58,7 @@ def _get_embedder() -> OllamaEmbedder:
             model=config.embedding.model,
             ollama_url=config.embedding.ollama_url,
             batch_size=config.embedding.batch_size,
+            max_tokens=config.embedding.max_tokens,
         )
     return _embedder
 
@@ -158,6 +159,7 @@ def sync_prs(repo: str, since_days: int = 90) -> str:
         metadata_db=_get_metadata_db(),
         embedder=_get_embedder(),
         github_client=github,
+        chunk_max_tokens=config.prs.chunk_max_tokens,
     )
     stats = indexer.sync(repo, since_days=since_days)
     return format_pr_sync_stats(stats)
