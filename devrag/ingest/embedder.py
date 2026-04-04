@@ -6,6 +6,8 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
+CHARS_PER_TOKEN = 4
+
 
 class OllamaEmbedder:
     def __init__(
@@ -13,10 +15,21 @@ class OllamaEmbedder:
         model: str = "nomic-embed-text",
         ollama_url: str = "http://localhost:11434",
         batch_size: int = 64,
+        max_tokens: int = 8192,
     ) -> None:
         self.model = model
         self.ollama_url = ollama_url.rstrip("/")
         self.batch_size = batch_size
+        self.max_chars = max_tokens * CHARS_PER_TOKEN
+
+    def _truncate(self, text: str) -> str:
+        if len(text) > self.max_chars:
+            logger.warning(
+                "Truncating text from %d to %d chars before embedding",
+                len(text), self.max_chars,
+            )
+            return text[:self.max_chars]
+        return text
 
     def embed(self, texts: list[str]) -> list[list[float]]:
         if not texts:
@@ -32,7 +45,7 @@ class OllamaEmbedder:
             logger.warning("All %d texts are empty; returning no embeddings", len(texts))
             return []
 
-        non_empty_texts = [texts[i] for i in non_empty_indices]
+        non_empty_texts = [self._truncate(texts[i]) for i in non_empty_indices]
 
         all_embeddings: list[list[float]] = []
         for i in range(0, len(non_empty_texts), self.batch_size):

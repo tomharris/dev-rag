@@ -12,6 +12,7 @@ class EmbeddingConfig:
     provider: str = "ollama"
     ollama_url: str = "http://localhost:11434"
     batch_size: int = 64
+    max_tokens: int = 8192
 
 
 @dataclass
@@ -48,6 +49,7 @@ class PrsConfig:
     github_token_env: str = "GITHUB_TOKEN"
     backfill_days: int = 90
     include_draft: bool = False
+    chunk_max_tokens: int = 512
 
 
 @dataclass
