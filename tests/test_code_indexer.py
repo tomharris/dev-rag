@@ -151,6 +151,41 @@ def test_extract_chunks_skips_empty_text_nodes(tmp_dir):
     assert filtered_chunks[0].metadata["entity_name"] == "bar"
 
 
+def test_whole_file_chunk_skips_empty_file(tmp_dir):
+    """Empty files should produce no chunks."""
+    p = tmp_dir / "empty.py"
+    p.write_text("")
+    chunks = extract_chunks_from_file(p, max_tokens=512)
+    assert chunks == []
+
+
+def test_whole_file_chunk_skips_whitespace_only_file(tmp_dir):
+    """Files containing only whitespace should produce no chunks."""
+    p = tmp_dir / "blank.py"
+    p.write_text("   \n\n  \t  \n")
+    chunks = extract_chunks_from_file(p, max_tokens=512)
+    assert chunks == []
+
+
+def test_code_indexer_skips_empty_file(tmp_dir, indexer_deps):
+    """Empty files should not cause embedding or upsert errors."""
+    store, meta, embedder = indexer_deps
+    repo = tmp_dir / "repo"
+    repo.mkdir()
+    import subprocess
+    subprocess.run(["git", "init", str(repo)], capture_output=True, check=True)
+    subprocess.run(["git", "config", "user.email", "t@t.com"], cwd=str(repo), capture_output=True)
+    subprocess.run(["git", "config", "user.name", "T"], cwd=str(repo), capture_output=True)
+    (repo / "empty.py").write_text("")
+    (repo / "real.py").write_text("def hello():\n    return 'world'\n")
+    subprocess.run(["git", "add", "."], cwd=str(repo), capture_output=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=str(repo), capture_output=True)
+    indexer = CodeIndexer(store, meta, embedder)
+    stats = indexer.index_repo(repo)
+    assert stats.files_indexed >= 1
+    assert stats.chunks_created >= 1
+
+
 def test_code_indexer_detects_removed_files(tmp_dir, indexer_deps):
     store, meta, embedder = indexer_deps
     repo = tmp_dir / "repo"
