@@ -2,6 +2,10 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Search Strategy
+
+Always use `/rag-search` (DevRAG) as the FIRST tool when answering codebase questions. Only fall back to Grep/Glob/Explore if RAG results are insufficient. DevRAG has semantic understanding of code structure, PR history, and documentation that keyword search misses.
+
 ## Build & Development Commands
 
 ```bash
