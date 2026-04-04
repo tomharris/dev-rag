@@ -137,6 +137,9 @@ The repo includes Claude Code skills in `.claude/skills/`:
 | `/rag-search <query>` | Search code, PRs, and docs with results grouped by source type |
 | `/rag-index [path]` | Index a repo, docs directory, or sync PRs |
 | `/rag-pr <query>` | Search PR history for why code changed |
+| `rag-first` (auto) | Auto-triggers on codebase questions to search DevRAG before Grep/Glob/Explore |
+
+The `rag-first` skill fires automatically when Claude detects a codebase question — no slash command needed. A hookify warning rule (`.claude/hookify.rag-first-reminder.local.md`) provides a safety-net nudge if Grep/Glob are used without searching DevRAG first.
 
 ## Architecture
 
