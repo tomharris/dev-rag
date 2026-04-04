@@ -70,6 +70,7 @@ Nested dataclass hierarchy in `devrag/config.py`. Loaded from `~/.config/devrag/
 - **Text truncation safety**: PR chunks are truncated at creation time (`chunk_max_tokens`), and the embedder has a safety-net truncation at the model context limit (`embedding.max_tokens`). Empty/whitespace texts produce zero vectors.
 - **Git-aware file discovery**: `devrag/utils/git.py` respects `.gitignore` and `.devragignore`.
 - GitHub tokens come from env vars (configured via `prs.github_token_env`), never stored in config files.
+- **RAG-first routing**: The `rag-first` skill (`.claude/skills/rag-first/`) auto-triggers on codebase questions. A hookify rule (`.claude/hookify.rag-first-reminder.local.md`) warns if Grep/Glob are used without searching DevRAG first.
 
 ## Dependencies
 
