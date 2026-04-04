@@ -32,7 +32,9 @@ def test_query(mock_qdrant_client):
     mock_scored_point.id = "a"
     mock_scored_point.score = 0.95
     mock_scored_point.payload = {"_document": "doc a", "lang": "en"}
-    mock_qdrant_client.search.return_value = [mock_scored_point]
+    mock_response = MagicMock()
+    mock_response.points = [mock_scored_point]
+    mock_qdrant_client.query_points.return_value = mock_response
     store = QdrantStore(url="http://localhost:6333", embedding_dim=768)
     result = store.query(collection="test", query_embedding=[0.1] * 768, n_results=5)
     assert isinstance(result, QueryResult)
@@ -73,8 +75,10 @@ def test_count_nonexistent(mock_qdrant_client):
 
 def test_query_with_where_filter(mock_qdrant_client):
     mock_qdrant_client.collection_exists.return_value = True
-    mock_qdrant_client.search.return_value = []
+    mock_response = MagicMock()
+    mock_response.points = []
+    mock_qdrant_client.query_points.return_value = mock_response
     store = QdrantStore(url="http://localhost:6333", embedding_dim=768)
     store.query(collection="test", query_embedding=[0.1] * 768, where={"lang": "python"})
-    search_call = mock_qdrant_client.search.call_args
+    search_call = mock_qdrant_client.query_points.call_args
     assert search_call.kwargs.get("query_filter") is not None

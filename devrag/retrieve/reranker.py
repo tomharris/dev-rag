@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import logging
+
+import transformers.utils.logging as tf_logging
 from sentence_transformers import CrossEncoder
 
 from devrag.types import SearchResult
@@ -7,7 +10,16 @@ from devrag.types import SearchResult
 
 class Reranker:
     def __init__(self, model_name: str = "cross-encoder/ms-marco-MiniLM-L-6-v2") -> None:
-        self._model = CrossEncoder(model_name)
+        prev_tf = tf_logging.get_verbosity()
+        hf_logger = logging.getLogger("huggingface_hub.utils._http")
+        prev_hf = hf_logger.level
+        tf_logging.set_verbosity_error()
+        hf_logger.setLevel(logging.ERROR)
+        try:
+            self._model = CrossEncoder(model_name)
+        finally:
+            tf_logging.set_verbosity(prev_tf)
+            hf_logger.setLevel(prev_hf)
 
     def rerank(self, query: str, candidates: list[SearchResult], top_k: int = 5) -> list[SearchResult]:
         if not candidates:

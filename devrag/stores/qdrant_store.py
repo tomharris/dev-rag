@@ -51,10 +51,11 @@ class QdrantStore:
         if where:
             conditions = [FieldCondition(key=k, match=MatchValue(value=v)) for k, v in where.items()]
             query_filter = Filter(must=conditions)
-        results = self._client.search(
-            collection_name=collection, query_vector=query_embedding,
+        response = self._client.query_points(
+            collection_name=collection, query=query_embedding,
             limit=n_results, query_filter=query_filter, with_payload=True,
         )
+        results = response.points
         ids, documents, metadatas, distances = [], [], [], []
         for point in results:
             payload = dict(point.payload) if point.payload else {}
