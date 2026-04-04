@@ -71,3 +71,39 @@ def test_embed_empty_list():
     embedder = OllamaEmbedder(model="nomic-embed-text", ollama_url="http://localhost:11434")
     result = embedder.embed([])
     assert result == []
+
+
+@respx.mock
+def test_embed_filters_empty_texts():
+    """Empty/whitespace texts get zero vectors without hitting the API."""
+    respx.post("http://localhost:11434/api/embed").respond(json={
+        "model": "nomic-embed-text",
+        "embeddings": [[0.1, 0.2, 0.3]],
+    })
+    embedder = OllamaEmbedder(model="nomic-embed-text", ollama_url="http://localhost:11434")
+    result = embedder.embed(["", "hello", "   "])
+    assert len(result) == 3
+    assert result[1] == [0.1, 0.2, 0.3]
+    assert result[0] == [0.0, 0.0, 0.0]
+    assert result[2] == [0.0, 0.0, 0.0]
+
+
+@respx.mock
+def test_embed_all_empty_texts():
+    """All-empty input returns empty lists without calling API."""
+    embedder = OllamaEmbedder(model="nomic-embed-text", ollama_url="http://localhost:11434")
+    result = embedder.embed(["", "  ", "\n"])
+    assert len(result) == 3
+    assert all(v == [] for v in result)
+
+
+@respx.mock
+def test_embed_error_logs_response_body():
+    """Non-2xx responses log the body before raising."""
+    respx.post("http://localhost:11434/api/embed").respond(
+        status_code=400,
+        json={"error": "empty input"},
+    )
+    embedder = OllamaEmbedder(model="nomic-embed-text", ollama_url="http://localhost:11434")
+    with pytest.raises(httpx.HTTPStatusError):
+        embedder.embed(["valid text"])
