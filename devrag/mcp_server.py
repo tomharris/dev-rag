@@ -9,13 +9,14 @@ from devrag.config import DevragConfig, load_config
 from devrag.ingest.code_indexer import CodeIndexer
 from devrag.ingest.doc_indexer import DocIndexer
 from devrag.ingest.embedder import OllamaEmbedder
+from devrag.ingest.issue_indexer import IssueIndexer
 from devrag.ingest.pr_indexer import PRIndexer
 from devrag.retrieve.hybrid_search import HybridSearch
 from devrag.retrieve.query_router import QueryRouter
 from devrag.retrieve.reranker import Reranker
 from devrag.stores.factory import create_vector_store
 from devrag.stores.metadata_db import MetadataDB
-from devrag.utils.formatters import format_doc_index_stats, format_index_stats, format_pr_sync_stats, format_search_results
+from devrag.utils.formatters import format_doc_index_stats, format_index_stats, format_issue_sync_stats, format_pr_sync_stats, format_search_results
 from devrag.utils.github import GitHubClient
 
 mcp = FastMCP("DevRAG")
@@ -73,12 +74,13 @@ def _get_reranker() -> Reranker:
 
 @mcp.tool
 def search(query: str, scope: str = "all", top_k: int = 5) -> str:
-    """Search code, PRs, and docs using hybrid retrieval.
+    """Search code, PRs, issues, and docs using hybrid retrieval.
 
     Args:
         query: The search query.
         scope: What to search. "all" auto-routes by intent,
-               "code" searches code only, "prs" searches PRs only.
+               "code" searches code only, "prs" searches PRs only,
+               "issues" searches issues only.
         top_k: Number of results to return.
     """
     config = _get_config()
@@ -166,13 +168,40 @@ def sync_prs(repo: str, since_days: int = 90) -> str:
 
 
 @mcp.tool
+def sync_issues(repo: str, since_days: int = 90) -> str:
+    """Sync GitHub issues for a repository.
+
+    Fetches issue descriptions and comments, then indexes them for search.
+    Uses cursor-based sync to avoid re-fetching. Skips pull requests.
+
+    Requires GITHUB_TOKEN environment variable.
+    """
+    config = _get_config()
+    token = os.environ.get(config.issues.github_token_env)
+    if not token:
+        return f"Error: {config.issues.github_token_env} environment variable not set."
+    github = GitHubClient(token=token)
+    indexer = IssueIndexer(
+        vector_store=_get_vector_store(),
+        metadata_db=_get_metadata_db(),
+        embedder=_get_embedder(),
+        github_client=github,
+        chunk_max_tokens=config.issues.chunk_max_tokens,
+    )
+    stats = indexer.sync(repo, since_days=since_days)
+    return format_issue_sync_stats(stats)
+
+
+@mcp.tool
 def status() -> str:
-    """Show indexing status: files, code chunks, PRs, and documents."""
+    """Show indexing status: files, code chunks, PRs, issues, and documents."""
     store = _get_vector_store()
     meta = _get_metadata_db()
     chunk_count = store.count("code_chunks")
     pr_diff_count = store.count("pr_diffs")
     pr_disc_count = store.count("pr_discussions")
+    issue_desc_count = store.count("issue_descriptions")
+    issue_disc_count = store.count("issue_discussions")
     doc_count = store.count("documents")
     indexed_files = meta.get_all_indexed_files()
     lines = [
@@ -180,6 +209,8 @@ def status() -> str:
         f"Code chunks: {chunk_count}",
         f"PR diff chunks: {pr_diff_count}",
         f"PR discussion chunks: {pr_disc_count}",
+        f"Issue description chunks: {issue_desc_count}",
+        f"Issue discussion chunks: {issue_disc_count}",
         f"Document chunks: {doc_count}",
     ]
     stats = meta.get_query_stats()

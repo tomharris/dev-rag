@@ -79,5 +79,17 @@ class GitHubClient:
         url = f"{API_BASE}/repos/{repo}/pulls/{pr_number}/comments"
         return self.paginate(url, params={"per_page": 100})
 
+    def list_issues(self, repo: str, state: str = "all", sort: str = "updated",
+                    direction: str = "desc", per_page: int = 100, since: str | None = None) -> list[dict]:
+        params: dict = {"state": state, "sort": sort, "direction": direction, "per_page": per_page}
+        if since:
+            params["since"] = since
+        url = f"{API_BASE}/repos/{repo}/issues"
+        return self.paginate(url, params=params)
+
+    def get_issue_comments(self, repo: str, issue_number: int) -> list[dict]:
+        url = f"{API_BASE}/repos/{repo}/issues/{issue_number}/comments"
+        return self.paginate(url, params={"per_page": 100})
+
     def close(self) -> None:
         self._client.close()
