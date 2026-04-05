@@ -1,6 +1,6 @@
 # DevRAG
 
-A local RAG system for developer teams that ingests **code**, **GitHub PRs**, and **documents** — surfaced through Claude Code slash commands and a standalone CLI. Designed for zero-friction adoption: index your repo, search immediately.
+A local RAG system for developer teams that ingests **code**, **GitHub PRs**, **GitHub issues**, and **documents** — surfaced through Claude Code slash commands and a standalone CLI. Designed for zero-friction adoption: index your repo, search immediately.
 
 ## Why DevRAG?
 
@@ -8,7 +8,7 @@ Most code search tools treat source files as plain text. DevRAG uses **tree-sitt
 
 It combines **vector search** (semantic) with **BM25** (keyword) via Reciprocal Rank Fusion, which is critical for code where exact identifiers like `refreshToken` matter as much as the concept of "token refresh."
 
-PR history is a first-class data source — encoding *why* code changed, not just *what* changed.
+PR history and issues are first-class data sources — encoding *why* code changed and what bugs and features are tracked.
 
 ## Quick Start
 
@@ -41,7 +41,7 @@ uv run devrag --help
 # Index the current repository
 devrag index repo .
 
-# Search across code, PRs, and docs
+# Search across code, PRs, issues, and docs
 devrag search "how does authentication work"
 
 # Check what's indexed
@@ -64,11 +64,12 @@ devrag status
 devrag search "query"                      # Search all sources
 devrag search "query" --scope code         # Code only
 devrag search "query" --scope prs          # PR history only
+devrag search "query" --scope issues       # Issues only
 devrag search "query" --scope docs         # Documents only
 devrag search "query" --top-k 10           # More results
 ```
 
-The query router automatically classifies intent and targets relevant collections. "Why did we switch to Redis?" routes to PR history; "how does the auth middleware work?" routes to code.
+The query router automatically classifies intent and targets relevant collections. "Why did we switch to Redis?" routes to PR history; "is there a bug with login?" routes to issues; "how does the auth middleware work?" routes to code.
 
 ### Indexing
 
@@ -86,6 +87,10 @@ devrag index docs ./docs --glob "**/*.txt,**/*.rst"
 export GITHUB_TOKEN=ghp_xxx
 devrag index prs owner/repo                # Last 90 days
 devrag index prs owner/repo --since 180d   # Custom lookback
+
+# GitHub Issues (incremental, skips PRs)
+devrag index issues owner/repo             # Last 90 days
+devrag index issues owner/repo --since 30d # Custom lookback
 ```
 
 Code indexing is **incremental** — file content hashes are tracked in SQLite, so unchanged files are skipped on re-index.
@@ -169,8 +174,8 @@ The `rag-first` skill fires automatically when Claude detects a codebase questio
              ▼
 ┌─────────────────────────────────────────────────────────────────────┐
 │                     INGESTION LAYER                                 │
-│  Code Indexer          PR Indexer          Doc Indexer              │
-│  (tree-sitter AST)     (GitHub API)        (section-aware)         │
+│  Code Indexer    PR Indexer    Issue Indexer    Doc Indexer          │
+│  (tree-sitter AST)  (GitHub API)   (GitHub API)   (section-aware)  │
 │                                                                     │
 │  Ollama Embedder (nomic-embed-text, 768d)                          │
 └─────────────────────────────────────────────────────────────────────┘
@@ -183,6 +188,8 @@ The `rag-first` skill fires automatically when Claude detects a codebase questio
 | `code_chunks` | Code indexer | AST-extracted functions, classes, methods |
 | `pr_diffs` | PR indexer | PR descriptions and file-level diff hunks |
 | `pr_discussions` | PR indexer | Review comments and threads |
+| `issue_descriptions` | Issue indexer | Issue titles and bodies |
+| `issue_discussions` | Issue indexer | Issue comments |
 | `documents` | Doc indexer | Markdown/text sections |
 
 ## Configuration
@@ -227,6 +234,13 @@ prs:
   backfill_days: 90
   include_draft: false
   chunk_max_tokens: 512              # Max tokens per PR chunk
+
+issues:
+  github_token_env: GITHUB_TOKEN  # Reuses same token as PRs
+  backfill_days: 90
+  chunk_max_tokens: 512
+  include_labels: []              # Only index issues with these labels (empty = all)
+  exclude_labels: ["wontfix"]     # Skip issues with these labels
 
 documents:
   glob_patterns: ["**/*.md", "**/*.mdx", "**/*.txt", "**/*.rst", "**/*.html", "**/*.adoc"]

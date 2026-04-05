@@ -1,9 +1,10 @@
 from __future__ import annotations
 import re
 
-ALL_COLLECTIONS = ["code_chunks", "pr_diffs", "pr_discussions", "documents"]
+ALL_COLLECTIONS = ["code_chunks", "pr_diffs", "pr_discussions", "issue_descriptions", "issue_discussions", "documents"]
 CODE_COLLECTIONS = ["code_chunks"]
 PR_COLLECTIONS = ["pr_diffs", "pr_discussions"]
+ISSUE_COLLECTIONS = ["issue_descriptions", "issue_discussions"]
 DOC_COLLECTIONS = ["documents"]
 
 _PR_PATTERNS = [
@@ -12,6 +13,11 @@ _PR_PATTERNS = [
     r"\bswitch(?:ed)?\s+(?:from|to)\b", r"\bmigrat(?:e|ed|ion)\b",
     r"\bchange(?:d|s)?\s+(?:the|to|from)\b", r"\bremov(?:e|ed)\b.*\bwhy\b",
     r"\bwhy\b.*\bremov(?:e|ed)\b", r"\bintroduc(?:e|ed)\b", r"\brevert(?:ed)?\b", r"\bdeprecated?\b",
+]
+
+_ISSUE_PATTERNS = [
+    r"\bbug\b", r"\bissue[sd]?\b", r"\bfeature\s+request\b",
+    r"\breported?\b", r"\bfiled?\b", r"\bticket\b",
 ]
 
 _DOC_PATTERNS = [
@@ -39,9 +45,14 @@ class QueryRouter:
             return CODE_COLLECTIONS
         if scope == "prs":
             return PR_COLLECTIONS
+        if scope == "issues":
+            return ISSUE_COLLECTIONS
         if scope == "docs":
             return DOC_COLLECTIONS
         q = query.lower()
+        for pattern in _ISSUE_PATTERNS:
+            if re.search(pattern, q):
+                return ISSUE_COLLECTIONS
         for pattern in _PR_PATTERNS:
             if re.search(pattern, q):
                 return PR_COLLECTIONS

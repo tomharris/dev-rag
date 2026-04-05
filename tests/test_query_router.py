@@ -70,3 +70,26 @@ def test_docs_only_scope():
 def test_ambiguous_query_includes_docs():
     router = QueryRouter()
     assert "documents" in router.route("tell me about authentication")
+
+
+def test_issue_query_bug():
+    router = QueryRouter()
+    collections = router.route("is there a bug with login")
+    assert "issue_descriptions" in collections
+    assert "issue_discussions" in collections
+
+
+def test_issue_query_filed():
+    router = QueryRouter()
+    collections = router.route("was a ticket filed for this")
+    assert "issue_descriptions" in collections
+
+
+def test_issues_only_scope():
+    assert set(QueryRouter().route("anything", scope="issues")) == {"issue_descriptions", "issue_discussions"}
+
+
+def test_all_collections_include_issues():
+    from devrag.retrieve.query_router import ALL_COLLECTIONS
+    assert "issue_descriptions" in ALL_COLLECTIONS
+    assert "issue_discussions" in ALL_COLLECTIONS

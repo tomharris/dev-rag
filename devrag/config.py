@@ -53,6 +53,15 @@ class PrsConfig:
 
 
 @dataclass
+class IssuesConfig:
+    github_token_env: str = "GITHUB_TOKEN"
+    backfill_days: int = 90
+    chunk_max_tokens: int = 512
+    include_labels: list[str] = field(default_factory=list)
+    exclude_labels: list[str] = field(default_factory=list)
+
+
+@dataclass
 class DocumentsConfig:
     glob_patterns: list[str] = field(default_factory=lambda: [
         "**/*.md", "**/*.mdx", "**/*.txt", "**/*.rst", "**/*.html", "**/*.adoc",
@@ -68,6 +77,7 @@ class DevragConfig:
     retrieval: RetrievalConfig = field(default_factory=RetrievalConfig)
     code: CodeConfig = field(default_factory=CodeConfig)
     prs: PrsConfig = field(default_factory=PrsConfig)
+    issues: IssuesConfig = field(default_factory=IssuesConfig)
     documents: DocumentsConfig = field(default_factory=DocumentsConfig)
 
 

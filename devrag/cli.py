@@ -31,10 +31,10 @@ def _get_search_components():
 @app.command()
 def search(
     query: str = typer.Argument(..., help="Search query text"),
-    scope: str = typer.Option("all", help="Scope: all, code, prs, docs"),
+    scope: str = typer.Option("all", help="Scope: all, code, prs, issues, docs"),
     top_k: int = typer.Option(5, help="Number of results"),
 ):
-    """Search code, PRs, and docs."""
+    """Search code, PRs, issues, and docs."""
     from devrag.retrieve.query_router import QueryRouter
     from devrag.utils.formatters import format_search_results
     hybrid, reranker, config = _get_search_components()
@@ -125,6 +125,37 @@ def index_prs(
     typer.echo(format_pr_sync_stats(stats))
 
 
+@index_app.command("issues")
+def index_issues(
+    repo: str = typer.Argument(..., help="GitHub repo (owner/name)"),
+    since: str = typer.Option("90d", help="Lookback period (e.g. 90d)"),
+):
+    """Sync GitHub issues for a repository."""
+    from devrag.config import load_config
+    from devrag.ingest.embedder import OllamaEmbedder
+    from devrag.ingest.issue_indexer import IssueIndexer
+    from devrag.stores.factory import create_vector_store
+    from devrag.stores.metadata_db import MetadataDB
+    from devrag.utils.formatters import format_issue_sync_stats
+    from devrag.utils.github import GitHubClient
+    config = load_config(project_dir=Path.cwd())
+    token = os.environ.get(config.issues.github_token_env)
+    if not token:
+        typer.echo(f"Error: {config.issues.github_token_env} environment variable not set.", err=True)
+        raise typer.Exit(1)
+    store = create_vector_store(config)
+    db_dir = Path("~/.local/share/devrag").expanduser()
+    db_dir.mkdir(parents=True, exist_ok=True)
+    meta = MetadataDB(str(db_dir / "metadata.db"))
+    embedder = OllamaEmbedder(model=config.embedding.model, ollama_url=config.embedding.ollama_url, batch_size=config.embedding.batch_size, max_tokens=config.embedding.max_tokens)
+    days = int(since.rstrip("d"))
+    github = GitHubClient(token=token)
+    indexer = IssueIndexer(store, meta, embedder, github, chunk_max_tokens=config.issues.chunk_max_tokens,
+                           include_labels=config.issues.include_labels, exclude_labels=config.issues.exclude_labels)
+    stats = indexer.sync(repo, since_days=days)
+    typer.echo(format_issue_sync_stats(stats))
+
+
 @app.command()
 def status():
     """Show indexing status."""
@@ -142,6 +173,8 @@ def status():
         f"Code chunks: {store.count('code_chunks')}",
         f"PR diff chunks: {store.count('pr_diffs')}",
         f"PR discussion chunks: {store.count('pr_discussions')}",
+        f"Issue description chunks: {store.count('issue_descriptions')}",
+        f"Issue discussion chunks: {store.count('issue_discussions')}",
         f"Document chunks: {store.count('documents')}",
     ]
     stats = meta.get_query_stats()

@@ -46,6 +46,20 @@ class MetadataDB:
             CREATE INDEX IF NOT EXISTS idx_pr_chunk_sources_repo_pr
                 ON pr_chunk_sources(repo, pr_number);
 
+            CREATE TABLE IF NOT EXISTS issue_sync_cursors (
+                repo TEXT PRIMARY KEY,
+                last_synced TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS issue_chunk_sources (
+                chunk_id TEXT PRIMARY KEY,
+                repo TEXT NOT NULL,
+                issue_number INTEGER NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_issue_chunk_sources_repo_issue
+                ON issue_chunk_sources(repo, issue_number);
+
             CREATE TABLE IF NOT EXISTS query_metrics (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 query TEXT NOT NULL,
@@ -153,6 +167,44 @@ class MetadataDB:
             placeholders = ",".join("?" for _ in chunk_ids)
             self._conn.execute(
                 f"DELETE FROM pr_chunk_sources WHERE chunk_id IN ({placeholders})",
+                chunk_ids,
+            )
+            self._conn.commit()
+
+    def get_issue_sync_cursor(self, repo: str) -> str | None:
+        row = self._conn.execute(
+            "SELECT last_synced FROM issue_sync_cursors WHERE repo = ?", (repo,)
+        ).fetchone()
+        return row[0] if row else None
+
+    def set_issue_sync_cursor(self, repo: str, last_synced: str) -> None:
+        self._conn.execute(
+            "INSERT OR REPLACE INTO issue_sync_cursors (repo, last_synced) VALUES (?, ?)",
+            (repo, last_synced),
+        )
+        self._conn.commit()
+
+    def set_issue_chunk_source(self, chunk_id: str, repo: str, issue_number: int) -> None:
+        self._conn.execute(
+            "INSERT OR REPLACE INTO issue_chunk_sources (chunk_id, repo, issue_number) VALUES (?, ?, ?)",
+            (chunk_id, repo, issue_number),
+        )
+        self._conn.commit()
+
+    def get_chunks_for_issue(self, repo: str, issue_number: int) -> list[str]:
+        rows = self._conn.execute(
+            "SELECT chunk_id FROM issue_chunk_sources WHERE repo = ? AND issue_number = ?",
+            (repo, issue_number),
+        ).fetchall()
+        return [r[0] for r in rows]
+
+    def delete_chunks_for_issue(self, repo: str, issue_number: int) -> None:
+        chunk_ids = self.get_chunks_for_issue(repo, issue_number)
+        if chunk_ids:
+            self.delete_fts(chunk_ids)
+            placeholders = ",".join("?" for _ in chunk_ids)
+            self._conn.execute(
+                f"DELETE FROM issue_chunk_sources WHERE chunk_id IN ({placeholders})",
                 chunk_ids,
             )
             self._conn.commit()

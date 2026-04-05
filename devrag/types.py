@@ -55,3 +55,12 @@ class PRSyncStats:
     prs_indexed: int = 0
     prs_skipped: int = 0
     chunks_created: int = 0
+
+
+@dataclass
+class IssueSyncStats:
+    """Statistics from an issue sync run."""
+    issues_fetched: int = 0
+    issues_indexed: int = 0
+    issues_skipped: int = 0
+    chunks_created: int = 0
