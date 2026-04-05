@@ -187,6 +187,8 @@ def sync_issues(repo: str, since_days: int = 90) -> str:
         embedder=_get_embedder(),
         github_client=github,
         chunk_max_tokens=config.issues.chunk_max_tokens,
+        include_labels=config.issues.include_labels,
+        exclude_labels=config.issues.exclude_labels,
     )
     stats = indexer.sync(repo, since_days=since_days)
     return format_issue_sync_stats(stats)

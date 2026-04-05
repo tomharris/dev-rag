@@ -71,12 +71,17 @@ def chunk_issue(issue: dict, comments: list[dict], repo: str, max_tokens: int = 
 
 
 class IssueIndexer:
-    def __init__(self, vector_store, metadata_db, embedder, github_client, chunk_max_tokens: int = 512) -> None:
+    def __init__(self, vector_store, metadata_db, embedder, github_client,
+                 chunk_max_tokens: int = 512,
+                 include_labels: list[str] | None = None,
+                 exclude_labels: list[str] | None = None) -> None:
         self.vector_store = vector_store
         self.metadata_db = metadata_db
         self.embedder = embedder
         self.github = github_client
         self.chunk_max_tokens = chunk_max_tokens
+        self.include_labels = set(include_labels) if include_labels else set()
+        self.exclude_labels = set(exclude_labels) if exclude_labels else set()
 
     def sync(self, repo: str, since_days: int = 90) -> IssueSyncStats:
         stats = IssueSyncStats()
@@ -94,6 +99,15 @@ class IssueIndexer:
         for issue in issues:
             # Skip pull requests (GitHub Issues API returns PRs too)
             if "pull_request" in issue:
+                stats.issues_skipped += 1
+                continue
+
+            # Label filtering
+            issue_labels = {l["name"] for l in issue.get("labels", [])}
+            if self.include_labels and not issue_labels & self.include_labels:
+                stats.issues_skipped += 1
+                continue
+            if self.exclude_labels and issue_labels & self.exclude_labels:
                 stats.issues_skipped += 1
                 continue
 

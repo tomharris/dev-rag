@@ -239,6 +239,8 @@ issues:
   github_token_env: GITHUB_TOKEN  # Reuses same token as PRs
   backfill_days: 90
   chunk_max_tokens: 512
+  include_labels: []              # Only index issues with these labels (empty = all)
+  exclude_labels: ["wontfix"]     # Skip issues with these labels
 
 documents:
   glob_patterns: ["**/*.md", "**/*.mdx", "**/*.txt", "**/*.rst", "**/*.html", "**/*.adoc"]

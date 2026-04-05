@@ -35,6 +35,12 @@ Chunks are truncated to `chunk_max_tokens` (default 512) before embedding, match
 
 The GitHub Issues API returns pull requests as issues. Items with a `pull_request` key present in the API response are skipped to avoid duplicate content with the existing PR indexer.
 
+### Label Filtering
+
+Client-side filtering after fetch (the GitHub API only supports inclusion, not exclusion):
+- `include_labels`: If non-empty, only index issues that have **at least one** of these labels. Empty list means index all.
+- `exclude_labels`: Skip issues that have **any** of these labels. Exclusion takes priority over inclusion.
+
 ## Configuration
 
 ```python
@@ -43,6 +49,8 @@ class IssuesConfig:
     github_token_env: str = "GITHUB_TOKEN"
     backfill_days: int = 90
     chunk_max_tokens: int = 512
+    include_labels: list[str] = field(default_factory=list)  # empty = all
+    exclude_labels: list[str] = field(default_factory=list)
 ```
 
 Added as `issues: IssuesConfig` field on `DevragConfig`. Reuses the same GitHub token as PR indexing.

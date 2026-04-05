@@ -36,7 +36,7 @@ DevRAG is a local RAG system that ingests code, GitHub PRs, GitHub issues, and d
 **Ingestion** (`devrag/ingest/`) - Converts sources into embedded chunks:
 - `code_indexer.py` - AST-aware chunking via tree-sitter (50+ languages). Parses functions/classes/methods as semantic units, not raw text splits. Tracks file hashes in SQLite for incremental re-indexing.
 - `pr_indexer.py` - GitHub PR sync with cursor-based incremental fetching. Chunks PR descriptions, diff hunks, and review comments separately. Truncates chunks to `chunk_max_tokens` before embedding.
-- `issue_indexer.py` - GitHub issue sync with cursor-based incremental fetching. Chunks issue descriptions and comments separately into `issue_descriptions` and `issue_discussions` collections. Skips pull requests (GitHub Issues API returns PRs too).
+- `issue_indexer.py` - GitHub issue sync with cursor-based incremental fetching. Chunks issue descriptions and comments separately into `issue_descriptions` and `issue_discussions` collections. Skips pull requests (GitHub Issues API returns PRs too). Supports `include_labels` / `exclude_labels` filtering.
 - `doc_indexer.py` - Section-aware markdown/text splitting with token-based overlap.
 - `embedder.py` - Ollama embedding wrapper (default: `nomic-embed-text`). Truncates oversized text to `max_tokens` (default 8192) before embedding. Skips empty texts and returns zero vectors for their positions.
 

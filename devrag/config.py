@@ -57,6 +57,8 @@ class IssuesConfig:
     github_token_env: str = "GITHUB_TOKEN"
     backfill_days: int = 90
     chunk_max_tokens: int = 512
+    include_labels: list[str] = field(default_factory=list)
+    exclude_labels: list[str] = field(default_factory=list)
 
 
 @dataclass

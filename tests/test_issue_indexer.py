@@ -121,3 +121,64 @@ def test_issue_indexer_incremental_sync(tmp_dir):
     # Verify list_issues was called with the cursor as `since`
     call_kwargs = mock_github.list_issues.call_args
     assert call_kwargs.kwargs.get("since") == first_cursor or call_kwargs[1].get("since") == first_cursor
+
+
+def test_issue_indexer_include_labels(tmp_dir):
+    from devrag.stores.chroma_store import ChromaStore
+    from devrag.stores.metadata_db import MetadataDB
+    store = ChromaStore(persist_dir=str(tmp_dir / "chroma"))
+    meta = MetadataDB(str(tmp_dir / "meta.db"))
+    embedder = MagicMock()
+    embedder.embed = MagicMock(side_effect=lambda texts: [[0.1] * 768 for _ in texts])
+    mock_github = MagicMock()
+    mock_github.list_issues.return_value = [
+        _make_issue(number=1, title="Bug", labels=["bug"]),
+        _make_issue(number=2, title="Feature", labels=["enhancement"]),
+        _make_issue(number=3, title="Both", labels=["bug", "enhancement"]),
+    ]
+    mock_github.get_issue_comments.return_value = []
+    indexer = IssueIndexer(store, meta, embedder, mock_github, include_labels=["bug"])
+    stats = indexer.sync("acme/backend", since_days=90)
+    assert stats.issues_indexed == 2  # #1 (bug) and #3 (bug + enhancement)
+    assert stats.issues_skipped == 1  # #2 (enhancement only)
+
+
+def test_issue_indexer_exclude_labels(tmp_dir):
+    from devrag.stores.chroma_store import ChromaStore
+    from devrag.stores.metadata_db import MetadataDB
+    store = ChromaStore(persist_dir=str(tmp_dir / "chroma"))
+    meta = MetadataDB(str(tmp_dir / "meta.db"))
+    embedder = MagicMock()
+    embedder.embed = MagicMock(side_effect=lambda texts: [[0.1] * 768 for _ in texts])
+    mock_github = MagicMock()
+    mock_github.list_issues.return_value = [
+        _make_issue(number=1, title="Bug", labels=["bug"]),
+        _make_issue(number=2, title="Wontfix", labels=["wontfix"]),
+        _make_issue(number=3, title="Both", labels=["bug", "wontfix"]),
+    ]
+    mock_github.get_issue_comments.return_value = []
+    indexer = IssueIndexer(store, meta, embedder, mock_github, exclude_labels=["wontfix"])
+    stats = indexer.sync("acme/backend", since_days=90)
+    assert stats.issues_indexed == 1  # #1 only
+    assert stats.issues_skipped == 2  # #2 and #3
+
+
+def test_issue_indexer_include_and_exclude_labels(tmp_dir):
+    from devrag.stores.chroma_store import ChromaStore
+    from devrag.stores.metadata_db import MetadataDB
+    store = ChromaStore(persist_dir=str(tmp_dir / "chroma"))
+    meta = MetadataDB(str(tmp_dir / "meta.db"))
+    embedder = MagicMock()
+    embedder.embed = MagicMock(side_effect=lambda texts: [[0.1] * 768 for _ in texts])
+    mock_github = MagicMock()
+    mock_github.list_issues.return_value = [
+        _make_issue(number=1, title="Bug", labels=["bug"]),
+        _make_issue(number=2, title="Bug wontfix", labels=["bug", "wontfix"]),
+        _make_issue(number=3, title="Feature", labels=["enhancement"]),
+    ]
+    mock_github.get_issue_comments.return_value = []
+    indexer = IssueIndexer(store, meta, embedder, mock_github,
+                           include_labels=["bug"], exclude_labels=["wontfix"])
+    stats = indexer.sync("acme/backend", since_days=90)
+    assert stats.issues_indexed == 1  # #1 only (has bug, no wontfix)
+    assert stats.issues_skipped == 2  # #2 (excluded) and #3 (not included)

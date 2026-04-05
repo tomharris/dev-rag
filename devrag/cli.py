@@ -150,7 +150,8 @@ def index_issues(
     embedder = OllamaEmbedder(model=config.embedding.model, ollama_url=config.embedding.ollama_url, batch_size=config.embedding.batch_size, max_tokens=config.embedding.max_tokens)
     days = int(since.rstrip("d"))
     github = GitHubClient(token=token)
-    indexer = IssueIndexer(store, meta, embedder, github, chunk_max_tokens=config.issues.chunk_max_tokens)
+    indexer = IssueIndexer(store, meta, embedder, github, chunk_max_tokens=config.issues.chunk_max_tokens,
+                           include_labels=config.issues.include_labels, exclude_labels=config.issues.exclude_labels)
     stats = indexer.sync(repo, since_days=days)
     typer.echo(format_issue_sync_stats(stats))
 
