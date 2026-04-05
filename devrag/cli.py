@@ -156,6 +156,42 @@ def index_issues(
     typer.echo(format_issue_sync_stats(stats))
 
 
+@index_app.command("jira")
+def index_jira(
+    since: str = typer.Option("90d", help="Lookback period (e.g. 90d)"),
+):
+    """Sync Jira Cloud tickets based on configured JQL filter."""
+    from devrag.config import load_config
+    from devrag.ingest.embedder import OllamaEmbedder
+    from devrag.ingest.jira_indexer import JiraIndexer
+    from devrag.stores.factory import create_vector_store
+    from devrag.stores.metadata_db import MetadataDB
+    from devrag.utils.formatters import format_jira_sync_stats
+    from devrag.utils.jira_client import JiraClient
+    config = load_config(project_dir=Path.cwd())
+    if not config.jira.instance_url:
+        typer.echo("Error: jira.instance_url not configured in .devrag.yaml", err=True)
+        raise typer.Exit(1)
+    if not config.jira.jql:
+        typer.echo("Error: jira.jql not configured in .devrag.yaml", err=True)
+        raise typer.Exit(1)
+    email = os.environ.get(config.jira.jira_email_env)
+    token = os.environ.get(config.jira.jira_token_env)
+    if not email or not token:
+        typer.echo(f"Error: {config.jira.jira_email_env} and {config.jira.jira_token_env} environment variables must be set.", err=True)
+        raise typer.Exit(1)
+    store = create_vector_store(config)
+    db_dir = Path("~/.local/share/devrag").expanduser()
+    db_dir.mkdir(parents=True, exist_ok=True)
+    meta = MetadataDB(str(db_dir / "metadata.db"))
+    embedder = OllamaEmbedder(model=config.embedding.model, ollama_url=config.embedding.ollama_url, batch_size=config.embedding.batch_size, max_tokens=config.embedding.max_tokens)
+    days = int(since.rstrip("d"))
+    jira = JiraClient(instance_url=config.jira.instance_url, email=email, api_token=token)
+    indexer = JiraIndexer(store, meta, embedder, jira, chunk_max_tokens=config.jira.chunk_max_tokens)
+    stats = indexer.sync(config.jira.instance_url, config.jira.jql, since_days=days)
+    typer.echo(format_jira_sync_stats(stats))
+
+
 @app.command()
 def status():
     """Show indexing status."""
@@ -175,6 +211,8 @@ def status():
         f"PR discussion chunks: {store.count('pr_discussions')}",
         f"Issue description chunks: {store.count('issue_descriptions')}",
         f"Issue discussion chunks: {store.count('issue_discussions')}",
+        f"Jira description chunks: {store.count('jira_descriptions')}",
+        f"Jira discussion chunks: {store.count('jira_discussions')}",
         f"Document chunks: {store.count('documents')}",
     ]
     stats = meta.get_query_stats()

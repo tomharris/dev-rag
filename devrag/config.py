@@ -62,6 +62,16 @@ class IssuesConfig:
 
 
 @dataclass
+class JiraConfig:
+    jira_token_env: str = "JIRA_TOKEN"
+    jira_email_env: str = "JIRA_EMAIL"
+    instance_url: str = ""
+    jql: str = ""
+    backfill_days: int = 90
+    chunk_max_tokens: int = 512
+
+
+@dataclass
 class DocumentsConfig:
     glob_patterns: list[str] = field(default_factory=lambda: [
         "**/*.md", "**/*.mdx", "**/*.txt", "**/*.rst", "**/*.html", "**/*.adoc",
@@ -78,6 +88,7 @@ class DevragConfig:
     code: CodeConfig = field(default_factory=CodeConfig)
     prs: PrsConfig = field(default_factory=PrsConfig)
     issues: IssuesConfig = field(default_factory=IssuesConfig)
+    jira: JiraConfig = field(default_factory=JiraConfig)
     documents: DocumentsConfig = field(default_factory=DocumentsConfig)
 
 

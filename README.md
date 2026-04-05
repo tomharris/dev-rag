@@ -1,6 +1,6 @@
 # DevRAG
 
-A local RAG system for developer teams that ingests **code**, **GitHub PRs**, **GitHub issues**, and **documents** — surfaced through Claude Code slash commands and a standalone CLI. Designed for zero-friction adoption: index your repo, search immediately.
+A local RAG system for developer teams that ingests **code**, **GitHub PRs**, **GitHub issues**, **Jira Cloud tickets**, and **documents** — surfaced through Claude Code slash commands and a standalone CLI. Designed for zero-friction adoption: index your repo, search immediately.
 
 ## Why DevRAG?
 
@@ -8,7 +8,7 @@ Most code search tools treat source files as plain text. DevRAG uses **tree-sitt
 
 It combines **vector search** (semantic) with **BM25** (keyword) via Reciprocal Rank Fusion, which is critical for code where exact identifiers like `refreshToken` matter as much as the concept of "token refresh."
 
-PR history and issues are first-class data sources — encoding *why* code changed and what bugs and features are tracked.
+PR history, issues, and Jira tickets are first-class data sources — encoding *why* code changed, what bugs and features are tracked, and what project management context exists.
 
 ## Quick Start
 
@@ -69,7 +69,7 @@ devrag search "query" --scope docs         # Documents only
 devrag search "query" --top-k 10           # More results
 ```
 
-The query router automatically classifies intent and targets relevant collections. "Why did we switch to Redis?" routes to PR history; "is there a bug with login?" routes to issues; "how does the auth middleware work?" routes to code.
+The query router automatically classifies intent and targets relevant collections. "Why did we switch to Redis?" routes to PR history; "is there a bug with login?" routes to issues and Jira tickets; "what sprint is auth in?" routes to Jira; "how does the auth middleware work?" routes to code.
 
 ### Indexing
 
@@ -91,6 +91,12 @@ devrag index prs owner/repo --since 180d   # Custom lookback
 # GitHub Issues (incremental, skips PRs)
 devrag index issues owner/repo             # Last 90 days
 devrag index issues owner/repo --since 30d # Custom lookback
+
+# Jira Cloud tickets (incremental via JQL)
+export JIRA_EMAIL=you@company.com
+export JIRA_TOKEN=your-api-token
+devrag index jira                          # Uses JQL from .devrag.yaml
+devrag index jira --since 180d             # Custom lookback
 ```
 
 Code indexing is **incremental** — file content hashes are tracked in SQLite, so unchanged files are skipped on re-index.
@@ -174,8 +180,8 @@ The `rag-first` skill fires automatically when Claude detects a codebase questio
              ▼
 ┌─────────────────────────────────────────────────────────────────────┐
 │                     INGESTION LAYER                                 │
-│  Code Indexer    PR Indexer    Issue Indexer    Doc Indexer          │
-│  (tree-sitter AST)  (GitHub API)   (GitHub API)   (section-aware)  │
+│  Code Indexer  PR Indexer  Issue Indexer  Jira Indexer  Doc Indexer  │
+│  (tree-sitter) (GitHub)   (GitHub)      (Jira Cloud)  (sections)   │
 │                                                                     │
 │  Ollama Embedder (nomic-embed-text, 768d)                          │
 └─────────────────────────────────────────────────────────────────────┘
@@ -190,6 +196,8 @@ The `rag-first` skill fires automatically when Claude detects a codebase questio
 | `pr_discussions` | PR indexer | Review comments and threads |
 | `issue_descriptions` | Issue indexer | Issue titles and bodies |
 | `issue_discussions` | Issue indexer | Issue comments |
+| `jira_descriptions` | Jira indexer | Jira ticket summaries and descriptions |
+| `jira_discussions` | Jira indexer | Jira ticket comments |
 | `documents` | Doc indexer | Markdown/text sections |
 
 ## Configuration
@@ -241,6 +249,14 @@ issues:
   chunk_max_tokens: 512
   include_labels: []              # Only index issues with these labels (empty = all)
   exclude_labels: ["wontfix"]     # Skip issues with these labels
+
+jira:
+  jira_token_env: JIRA_TOKEN      # Env var for API token
+  jira_email_env: JIRA_EMAIL      # Env var for email (basic auth)
+  instance_url: https://yoursite.atlassian.net
+  jql: "project = DEV"            # JQL filter for scoping tickets
+  backfill_days: 90
+  chunk_max_tokens: 512
 
 documents:
   glob_patterns: ["**/*.md", "**/*.mdx", "**/*.txt", "**/*.rst", "**/*.html", "**/*.adoc"]

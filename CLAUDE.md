@@ -29,7 +29,7 @@ Integration tests are skipped by default (`SKIP_INTEGRATION != "0"`). They requi
 
 ## Architecture
 
-DevRAG is a local RAG system that ingests code, GitHub PRs, GitHub issues, and documents, surfaced via CLI (Typer) and MCP server (FastMCP) for Claude Code integration.
+DevRAG is a local RAG system that ingests code, GitHub PRs, GitHub issues, Jira Cloud tickets, and documents, surfaced via CLI (Typer) and MCP server (FastMCP) for Claude Code integration.
 
 ### Three-Layer Pipeline
 
@@ -37,13 +37,14 @@ DevRAG is a local RAG system that ingests code, GitHub PRs, GitHub issues, and d
 - `code_indexer.py` - AST-aware chunking via tree-sitter (50+ languages). Parses functions/classes/methods as semantic units, not raw text splits. Tracks file hashes in SQLite for incremental re-indexing.
 - `pr_indexer.py` - GitHub PR sync with cursor-based incremental fetching. Chunks PR descriptions, diff hunks, and review comments separately. Truncates chunks to `chunk_max_tokens` before embedding.
 - `issue_indexer.py` - GitHub issue sync with cursor-based incremental fetching. Chunks issue descriptions and comments separately into `issue_descriptions` and `issue_discussions` collections. Skips pull requests (GitHub Issues API returns PRs too). Supports `include_labels` / `exclude_labels` filtering.
+- `jira_indexer.py` - Jira Cloud ticket sync with cursor-based incremental fetching via JQL. Chunks ticket descriptions and comments into `jira_descriptions` and `jira_discussions` collections. Uses `JiraClient` (`devrag/utils/jira_client.py`) for REST API v3 with basic auth. Converts Atlassian Document Format (ADF) to plain text for embedding.
 - `doc_indexer.py` - Section-aware markdown/text splitting with token-based overlap.
 - `embedder.py` - Ollama embedding wrapper (default: `nomic-embed-text`). Truncates oversized text to `max_tokens` (default 8192) before embedding. Skips empty texts and returns zero vectors for their positions.
 
 **Storage** (`devrag/stores/`) - Pluggable vector store with metadata tracking:
 - `base.py` defines a `VectorStore` Protocol. `chroma_store.py` (default) and `qdrant_store.py` implement it. `factory.py` selects backend from config.
-- `metadata_db.py` - SQLite with WAL for file hashes, chunk-source mappings, PR/issue sync cursors, FTS5 index (BM25), and query metrics.
-- Six collections: `code_chunks`, `pr_diffs`, `pr_discussions`, `issue_descriptions`, `issue_discussions`, `documents`.
+- `metadata_db.py` - SQLite with WAL for file hashes, chunk-source mappings, PR/issue/Jira sync cursors, FTS5 index (BM25), and query metrics.
+- Eight collections: `code_chunks`, `pr_diffs`, `pr_discussions`, `issue_descriptions`, `issue_discussions`, `jira_descriptions`, `jira_discussions`, `documents`.
 
 **Retrieval** (`devrag/retrieve/`) - Query processing and result ranking:
 - `query_router.py` - Regex-based intent classification routes queries to relevant collections.
@@ -52,13 +53,13 @@ DevRAG is a local RAG system that ingests code, GitHub PRs, GitHub issues, and d
 
 ### Entry Points
 
-- **CLI**: `devrag/cli.py` - Typer app with subcommands: `search`, `index` (repo/docs/prs/issues), `status`, `config`, `serve`, `reindex`, `eval`.
-- **MCP Server**: `devrag/mcp_server.py` - FastMCP server with lazy-initialized global singletons for stores/embedders. Tools: `search()`, `index_repo()`, `index_docs()`, `sync_prs()`, `sync_issues()`, `status()`.
+- **CLI**: `devrag/cli.py` - Typer app with subcommands: `search`, `index` (repo/docs/prs/issues/jira), `status`, `config`, `serve`, `reindex`, `eval`.
+- **MCP Server**: `devrag/mcp_server.py` - FastMCP server with lazy-initialized global singletons for stores/embedders. Tools: `search()`, `index_repo()`, `index_docs()`, `sync_prs()`, `sync_issues()`, `sync_jira()`, `status()`.
 - **Types**: `devrag/types.py` - Core dataclasses (`Chunk`, `SearchResult`, `IndexStats`).
 
 ### Configuration
 
-Nested dataclass hierarchy in `devrag/config.py`. Loaded from `~/.config/devrag/devrag.yaml` (user) merged with `.devrag.yaml` (project). Key sections: `EmbeddingConfig` (including `max_tokens` for context limit), `VectorStoreConfig`, `RetrievalConfig`, `CodeConfig`, `PrsConfig`, `IssuesConfig`, `DocumentsConfig`.
+Nested dataclass hierarchy in `devrag/config.py`. Loaded from `~/.config/devrag/devrag.yaml` (user) merged with `.devrag.yaml` (project). Key sections: `EmbeddingConfig` (including `max_tokens` for context limit), `VectorStoreConfig`, `RetrievalConfig`, `CodeConfig`, `PrsConfig`, `IssuesConfig`, `JiraConfig`, `DocumentsConfig`.
 
 ### Evaluation
 
@@ -66,11 +67,11 @@ Nested dataclass hierarchy in `devrag/config.py`. Loaded from `~/.config/devrag/
 
 ## Key Patterns
 
-- **Incremental indexing**: File content hashes in SQLite skip unchanged files. PR and issue sync use stored cursors.
+- **Incremental indexing**: File content hashes in SQLite skip unchanged files. PR, issue, and Jira sync use stored cursors.
 - **VectorStore Protocol**: Adding a new backend means implementing `upsert()`, `query()`, `delete()` and registering in `factory.py`.
 - **Text truncation safety**: PR chunks are truncated at creation time (`chunk_max_tokens`), and the embedder has a safety-net truncation at the model context limit (`embedding.max_tokens`). Empty/whitespace texts produce zero vectors.
 - **Git-aware file discovery**: `devrag/utils/git.py` respects `.gitignore` and `.devragignore`.
-- GitHub tokens come from env vars (configured via `prs.github_token_env` / `issues.github_token_env`), never stored in config files.
+- GitHub tokens come from env vars (configured via `prs.github_token_env` / `issues.github_token_env`), never stored in config files. Jira credentials similarly use `jira.jira_email_env` / `jira.jira_token_env`.
 - **RAG-first routing**: The `rag-first` skill (`.claude/skills/rag-first/`) auto-triggers on codebase questions. A hookify rule (`.claude/hookify.rag-first-reminder.local.md`) warns if Grep/Glob are used without searching DevRAG first.
 
 ## Dependencies
