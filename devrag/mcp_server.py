@@ -12,14 +12,16 @@ from devrag.ingest.embedder import OllamaEmbedder
 from devrag.ingest.issue_indexer import IssueIndexer
 from devrag.ingest.jira_indexer import JiraIndexer
 from devrag.ingest.pr_indexer import PRIndexer
+from devrag.ingest.slite_indexer import SliteIndexer
 from devrag.retrieve.hybrid_search import HybridSearch
 from devrag.retrieve.query_router import QueryRouter
 from devrag.retrieve.reranker import Reranker
 from devrag.stores.factory import create_vector_store
 from devrag.stores.metadata_db import MetadataDB
-from devrag.utils.formatters import format_doc_index_stats, format_index_stats, format_issue_sync_stats, format_jira_sync_stats, format_pr_sync_stats, format_search_results
+from devrag.utils.formatters import format_doc_index_stats, format_index_stats, format_issue_sync_stats, format_jira_sync_stats, format_pr_sync_stats, format_search_results, format_slite_sync_stats
 from devrag.utils.github import GitHubClient
 from devrag.utils.jira_client import JiraClient
+from devrag.utils.slite_client import SliteClient
 
 mcp = FastMCP("DevRAG")
 
@@ -228,6 +230,34 @@ def sync_jira(since_days: int = 90) -> str:
 
 
 @mcp.tool
+def sync_slite(since_days: int = 90) -> str:
+    """Sync Slite pages for the configured workspace.
+
+    Fetches page content as markdown and indexes with section-aware chunking.
+    Uses cursor-based sync to avoid re-fetching unchanged pages.
+    Filters by configured channel IDs if set.
+
+    Requires SLITE_TOKEN environment variable.
+    """
+    config = _get_config()
+    token = os.environ.get(config.slite.slite_token_env)
+    if not token:
+        return f"Error: {config.slite.slite_token_env} environment variable not set."
+    slite = SliteClient(api_token=token)
+    indexer = SliteIndexer(
+        vector_store=_get_vector_store(),
+        metadata_db=_get_metadata_db(),
+        embedder=_get_embedder(),
+        slite_client=slite,
+        chunk_max_tokens=config.slite.chunk_max_tokens,
+        chunk_overlap_tokens=config.slite.chunk_overlap_tokens,
+        channel_ids=config.slite.channel_ids,
+    )
+    stats = indexer.sync(since_days=since_days)
+    return format_slite_sync_stats(stats)
+
+
+@mcp.tool
 def status() -> str:
     """Show indexing status: files, code chunks, PRs, issues, and documents."""
     store = _get_vector_store()
@@ -239,6 +269,7 @@ def status() -> str:
     issue_disc_count = store.count("issue_discussions")
     jira_desc_count = store.count("jira_descriptions")
     jira_disc_count = store.count("jira_discussions")
+    slite_count = store.count("slite_pages")
     doc_count = store.count("documents")
     indexed_files = meta.get_all_indexed_files()
     lines = [
@@ -250,6 +281,7 @@ def status() -> str:
         f"Issue discussion chunks: {issue_disc_count}",
         f"Jira description chunks: {jira_desc_count}",
         f"Jira discussion chunks: {jira_disc_count}",
+        f"Slite page chunks: {slite_count}",
         f"Document chunks: {doc_count}",
     ]
     stats = meta.get_query_stats()

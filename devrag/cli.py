@@ -192,6 +192,37 @@ def index_jira(
     typer.echo(format_jira_sync_stats(stats))
 
 
+@index_app.command("slite")
+def index_slite(
+    since: str = typer.Option("90d", help="Lookback period (e.g. 90d)"),
+):
+    """Sync Slite pages for the configured workspace."""
+    from devrag.config import load_config
+    from devrag.ingest.embedder import OllamaEmbedder
+    from devrag.ingest.slite_indexer import SliteIndexer
+    from devrag.stores.factory import create_vector_store
+    from devrag.stores.metadata_db import MetadataDB
+    from devrag.utils.formatters import format_slite_sync_stats
+    from devrag.utils.slite_client import SliteClient
+    config = load_config(project_dir=Path.cwd())
+    token = os.environ.get(config.slite.slite_token_env)
+    if not token:
+        typer.echo(f"Error: {config.slite.slite_token_env} environment variable not set.", err=True)
+        raise typer.Exit(1)
+    store = create_vector_store(config)
+    db_dir = Path("~/.local/share/devrag").expanduser()
+    db_dir.mkdir(parents=True, exist_ok=True)
+    meta = MetadataDB(str(db_dir / "metadata.db"))
+    embedder = OllamaEmbedder(model=config.embedding.model, ollama_url=config.embedding.ollama_url, batch_size=config.embedding.batch_size, max_tokens=config.embedding.max_tokens)
+    days = int(since.rstrip("d"))
+    slite = SliteClient(api_token=token)
+    indexer = SliteIndexer(store, meta, embedder, slite, chunk_max_tokens=config.slite.chunk_max_tokens,
+                           chunk_overlap_tokens=config.slite.chunk_overlap_tokens,
+                           channel_ids=config.slite.channel_ids)
+    stats = indexer.sync(since_days=days)
+    typer.echo(format_slite_sync_stats(stats))
+
+
 @app.command()
 def status():
     """Show indexing status."""
@@ -213,6 +244,7 @@ def status():
         f"Issue discussion chunks: {store.count('issue_discussions')}",
         f"Jira description chunks: {store.count('jira_descriptions')}",
         f"Jira discussion chunks: {store.count('jira_discussions')}",
+        f"Slite page chunks: {store.count('slite_pages')}",
         f"Document chunks: {store.count('documents')}",
     ]
     stats = meta.get_query_stats()

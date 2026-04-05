@@ -1,11 +1,12 @@
 from __future__ import annotations
 import re
 
-ALL_COLLECTIONS = ["code_chunks", "pr_diffs", "pr_discussions", "issue_descriptions", "issue_discussions", "jira_descriptions", "jira_discussions", "documents"]
+ALL_COLLECTIONS = ["code_chunks", "pr_diffs", "pr_discussions", "issue_descriptions", "issue_discussions", "jira_descriptions", "jira_discussions", "slite_pages", "documents"]
 CODE_COLLECTIONS = ["code_chunks"]
 PR_COLLECTIONS = ["pr_diffs", "pr_discussions"]
 ISSUE_COLLECTIONS = ["issue_descriptions", "issue_discussions"]
 JIRA_COLLECTIONS = ["jira_descriptions", "jira_discussions"]
+SLITE_COLLECTIONS = ["slite_pages"]
 DOC_COLLECTIONS = ["documents"]
 
 _PR_PATTERNS = [
@@ -24,6 +25,10 @@ _ISSUE_PATTERNS = [
 _JIRA_PATTERNS = [
     r"\bjira\b", r"\bsprint\b", r"\bepic\b", r"\bstory\b",
     r"\bstory\s+points?\b",
+]
+
+_SLITE_PATTERNS = [
+    r"\bslite\b", r"\bwiki\b", r"\bknowledge\s+base\b", r"\binternal\s+doc\b",
 ]
 
 _DOC_PATTERNS = [
@@ -55,9 +60,14 @@ class QueryRouter:
             return ISSUE_COLLECTIONS
         if scope == "jira":
             return JIRA_COLLECTIONS
+        if scope == "slite":
+            return SLITE_COLLECTIONS
         if scope == "docs":
             return DOC_COLLECTIONS
         q = query.lower()
+        for pattern in _SLITE_PATTERNS:
+            if re.search(pattern, q):
+                return SLITE_COLLECTIONS + DOC_COLLECTIONS
         for pattern in _JIRA_PATTERNS:
             if re.search(pattern, q):
                 return JIRA_COLLECTIONS

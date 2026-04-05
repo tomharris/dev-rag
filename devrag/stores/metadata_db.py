@@ -74,6 +74,20 @@ class MetadataDB:
             CREATE INDEX IF NOT EXISTS idx_jira_chunk_sources_instance_ticket
                 ON jira_chunk_sources(instance_url, ticket_key);
 
+            CREATE TABLE IF NOT EXISTS slite_sync_cursors (
+                workspace_id TEXT PRIMARY KEY,
+                last_synced TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS slite_chunk_sources (
+                chunk_id TEXT PRIMARY KEY,
+                workspace_id TEXT NOT NULL,
+                page_id TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_slite_chunk_sources_workspace_page
+                ON slite_chunk_sources(workspace_id, page_id);
+
             CREATE TABLE IF NOT EXISTS query_metrics (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 query TEXT NOT NULL,
@@ -257,6 +271,44 @@ class MetadataDB:
             placeholders = ",".join("?" for _ in chunk_ids)
             self._conn.execute(
                 f"DELETE FROM jira_chunk_sources WHERE chunk_id IN ({placeholders})",
+                chunk_ids,
+            )
+            self._conn.commit()
+
+    def get_slite_sync_cursor(self, workspace_id: str) -> str | None:
+        row = self._conn.execute(
+            "SELECT last_synced FROM slite_sync_cursors WHERE workspace_id = ?", (workspace_id,)
+        ).fetchone()
+        return row[0] if row else None
+
+    def set_slite_sync_cursor(self, workspace_id: str, last_synced: str) -> None:
+        self._conn.execute(
+            "INSERT OR REPLACE INTO slite_sync_cursors (workspace_id, last_synced) VALUES (?, ?)",
+            (workspace_id, last_synced),
+        )
+        self._conn.commit()
+
+    def set_slite_chunk_source(self, chunk_id: str, workspace_id: str, page_id: str) -> None:
+        self._conn.execute(
+            "INSERT OR REPLACE INTO slite_chunk_sources (chunk_id, workspace_id, page_id) VALUES (?, ?, ?)",
+            (chunk_id, workspace_id, page_id),
+        )
+        self._conn.commit()
+
+    def get_chunks_for_slite_page(self, workspace_id: str, page_id: str) -> list[str]:
+        rows = self._conn.execute(
+            "SELECT chunk_id FROM slite_chunk_sources WHERE workspace_id = ? AND page_id = ?",
+            (workspace_id, page_id),
+        ).fetchall()
+        return [r[0] for r in rows]
+
+    def delete_chunks_for_slite_page(self, workspace_id: str, page_id: str) -> None:
+        chunk_ids = self.get_chunks_for_slite_page(workspace_id, page_id)
+        if chunk_ids:
+            self.delete_fts(chunk_ids)
+            placeholders = ",".join("?" for _ in chunk_ids)
+            self._conn.execute(
+                f"DELETE FROM slite_chunk_sources WHERE chunk_id IN ({placeholders})",
                 chunk_ids,
             )
             self._conn.commit()
