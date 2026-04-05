@@ -60,6 +60,20 @@ class MetadataDB:
             CREATE INDEX IF NOT EXISTS idx_issue_chunk_sources_repo_issue
                 ON issue_chunk_sources(repo, issue_number);
 
+            CREATE TABLE IF NOT EXISTS jira_sync_cursors (
+                cursor_key TEXT PRIMARY KEY,
+                last_synced TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS jira_chunk_sources (
+                chunk_id TEXT PRIMARY KEY,
+                instance_url TEXT NOT NULL,
+                ticket_key TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_jira_chunk_sources_instance_ticket
+                ON jira_chunk_sources(instance_url, ticket_key);
+
             CREATE TABLE IF NOT EXISTS query_metrics (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 query TEXT NOT NULL,
@@ -205,6 +219,44 @@ class MetadataDB:
             placeholders = ",".join("?" for _ in chunk_ids)
             self._conn.execute(
                 f"DELETE FROM issue_chunk_sources WHERE chunk_id IN ({placeholders})",
+                chunk_ids,
+            )
+            self._conn.commit()
+
+    def get_jira_sync_cursor(self, cursor_key: str) -> str | None:
+        row = self._conn.execute(
+            "SELECT last_synced FROM jira_sync_cursors WHERE cursor_key = ?", (cursor_key,)
+        ).fetchone()
+        return row[0] if row else None
+
+    def set_jira_sync_cursor(self, cursor_key: str, last_synced: str) -> None:
+        self._conn.execute(
+            "INSERT OR REPLACE INTO jira_sync_cursors (cursor_key, last_synced) VALUES (?, ?)",
+            (cursor_key, last_synced),
+        )
+        self._conn.commit()
+
+    def set_jira_chunk_source(self, chunk_id: str, instance_url: str, ticket_key: str) -> None:
+        self._conn.execute(
+            "INSERT OR REPLACE INTO jira_chunk_sources (chunk_id, instance_url, ticket_key) VALUES (?, ?, ?)",
+            (chunk_id, instance_url, ticket_key),
+        )
+        self._conn.commit()
+
+    def get_chunks_for_jira_ticket(self, instance_url: str, ticket_key: str) -> list[str]:
+        rows = self._conn.execute(
+            "SELECT chunk_id FROM jira_chunk_sources WHERE instance_url = ? AND ticket_key = ?",
+            (instance_url, ticket_key),
+        ).fetchall()
+        return [r[0] for r in rows]
+
+    def delete_chunks_for_jira_ticket(self, instance_url: str, ticket_key: str) -> None:
+        chunk_ids = self.get_chunks_for_jira_ticket(instance_url, ticket_key)
+        if chunk_ids:
+            self.delete_fts(chunk_ids)
+            placeholders = ",".join("?" for _ in chunk_ids)
+            self._conn.execute(
+                f"DELETE FROM jira_chunk_sources WHERE chunk_id IN ({placeholders})",
                 chunk_ids,
             )
             self._conn.commit()

@@ -64,3 +64,12 @@ class IssueSyncStats:
     issues_indexed: int = 0
     issues_skipped: int = 0
     chunks_created: int = 0
+
+
+@dataclass
+class JiraSyncStats:
+    """Statistics from a Jira ticket sync run."""
+    tickets_fetched: int = 0
+    tickets_indexed: int = 0
+    tickets_skipped: int = 0
+    chunks_created: int = 0

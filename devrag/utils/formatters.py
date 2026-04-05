@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from devrag.types import DocIndexStats, IndexStats, IssueSyncStats, PRSyncStats, SearchResult
+from devrag.types import DocIndexStats, IndexStats, IssueSyncStats, JiraSyncStats, PRSyncStats, SearchResult
 
 
 def format_search_results(results: list[SearchResult]) -> str:
@@ -18,6 +18,22 @@ def format_search_results(results: list[SearchResult]) -> str:
             else:
                 issue_author = r.metadata.get("issue_author", "")
                 lines.append(f"### {i}. [Issue #{issue_num}] {issue_title} (by {issue_author})")
+            lines.append("```")
+            text_lines = r.text.strip().split("\n")
+            preview = "\n".join(text_lines[:10])
+            if len(text_lines) > 10:
+                preview += "\n# ... (truncated)"
+            lines.append(preview)
+            lines.append("```")
+            lines.append("")
+        elif "ticket_key" in r.metadata and chunk_type in ("description", "comment"):
+            ticket_key = r.metadata.get("ticket_key", "?")
+            ticket_summary = r.metadata.get("ticket_summary", "")
+            if chunk_type == "comment":
+                comment_author = r.metadata.get("comment_author", "")
+                lines.append(f"### {i}. [Jira {ticket_key}] Comment by {comment_author}")
+            else:
+                lines.append(f"### {i}. [Jira {ticket_key}] {ticket_summary}")
             lines.append("```")
             text_lines = r.text.strip().split("\n")
             preview = "\n".join(text_lines[:10])
@@ -113,4 +129,14 @@ def format_issue_sync_stats(stats: IssueSyncStats) -> str:
     ]
     if stats.issues_skipped:
         parts.append(f"Skipped {stats.issues_skipped} issues (PRs or unchanged)")
+    return ". ".join(parts) + "."
+
+
+def format_jira_sync_stats(stats: JiraSyncStats) -> str:
+    parts = [
+        f"Fetched {stats.tickets_fetched} Jira tickets",
+        f"Indexed {stats.tickets_indexed} tickets ({stats.chunks_created} chunks)",
+    ]
+    if stats.tickets_skipped:
+        parts.append(f"Skipped {stats.tickets_skipped} tickets")
     return ". ".join(parts) + "."

@@ -10,14 +10,16 @@ from devrag.ingest.code_indexer import CodeIndexer
 from devrag.ingest.doc_indexer import DocIndexer
 from devrag.ingest.embedder import OllamaEmbedder
 from devrag.ingest.issue_indexer import IssueIndexer
+from devrag.ingest.jira_indexer import JiraIndexer
 from devrag.ingest.pr_indexer import PRIndexer
 from devrag.retrieve.hybrid_search import HybridSearch
 from devrag.retrieve.query_router import QueryRouter
 from devrag.retrieve.reranker import Reranker
 from devrag.stores.factory import create_vector_store
 from devrag.stores.metadata_db import MetadataDB
-from devrag.utils.formatters import format_doc_index_stats, format_index_stats, format_issue_sync_stats, format_pr_sync_stats, format_search_results
+from devrag.utils.formatters import format_doc_index_stats, format_index_stats, format_issue_sync_stats, format_jira_sync_stats, format_pr_sync_stats, format_search_results
 from devrag.utils.github import GitHubClient
+from devrag.utils.jira_client import JiraClient
 
 mcp = FastMCP("DevRAG")
 
@@ -195,6 +197,37 @@ def sync_issues(repo: str, since_days: int = 90) -> str:
 
 
 @mcp.tool
+def sync_jira(since_days: int = 90) -> str:
+    """Sync Jira Cloud tickets based on configured JQL filter.
+
+    Fetches ticket descriptions and comments, then indexes them for search.
+    Uses cursor-based sync to avoid re-fetching.
+
+    Requires JIRA_EMAIL and JIRA_TOKEN environment variables,
+    plus jira.instance_url and jira.jql configured in .devrag.yaml.
+    """
+    config = _get_config()
+    if not config.jira.instance_url:
+        return "Error: jira.instance_url not configured in .devrag.yaml."
+    if not config.jira.jql:
+        return "Error: jira.jql not configured in .devrag.yaml."
+    email = os.environ.get(config.jira.jira_email_env)
+    token = os.environ.get(config.jira.jira_token_env)
+    if not email or not token:
+        return f"Error: {config.jira.jira_email_env} and {config.jira.jira_token_env} environment variables must be set."
+    jira = JiraClient(instance_url=config.jira.instance_url, email=email, api_token=token)
+    indexer = JiraIndexer(
+        vector_store=_get_vector_store(),
+        metadata_db=_get_metadata_db(),
+        embedder=_get_embedder(),
+        jira_client=jira,
+        chunk_max_tokens=config.jira.chunk_max_tokens,
+    )
+    stats = indexer.sync(config.jira.instance_url, config.jira.jql, since_days=since_days)
+    return format_jira_sync_stats(stats)
+
+
+@mcp.tool
 def status() -> str:
     """Show indexing status: files, code chunks, PRs, issues, and documents."""
     store = _get_vector_store()
@@ -204,6 +237,8 @@ def status() -> str:
     pr_disc_count = store.count("pr_discussions")
     issue_desc_count = store.count("issue_descriptions")
     issue_disc_count = store.count("issue_discussions")
+    jira_desc_count = store.count("jira_descriptions")
+    jira_disc_count = store.count("jira_discussions")
     doc_count = store.count("documents")
     indexed_files = meta.get_all_indexed_files()
     lines = [
@@ -213,6 +248,8 @@ def status() -> str:
         f"PR discussion chunks: {pr_disc_count}",
         f"Issue description chunks: {issue_desc_count}",
         f"Issue discussion chunks: {issue_disc_count}",
+        f"Jira description chunks: {jira_desc_count}",
+        f"Jira discussion chunks: {jira_disc_count}",
         f"Document chunks: {doc_count}",
     ]
     stats = meta.get_query_stats()
