@@ -38,21 +38,23 @@ class JiraClient:
 
     def search_issues(self, jql: str, fields: list[str], max_results: int = 100) -> Iterator[dict]:
         """Paginated JQL search. Yields individual issues."""
-        start_at = 0
+        next_page_token: str | None = None
         while True:
-            resp = self._request("POST", "search", json={
+            body: dict = {
                 "jql": jql,
                 "fields": fields,
-                "startAt": start_at,
                 "maxResults": max_results,
-            })
+            }
+            if next_page_token is not None:
+                body["nextPageToken"] = next_page_token
+            resp = self._request("POST", "search/jql", json=body)
             data = resp.json()
             issues = data.get("issues", [])
             if not issues:
                 break
             yield from issues
-            start_at += len(issues)
-            if start_at >= data.get("total", 0):
+            next_page_token = data.get("nextPageToken")
+            if not next_page_token:
                 break
 
     @staticmethod
