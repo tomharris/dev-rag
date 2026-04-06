@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from devrag.types import DocIndexStats, IndexStats, IssueSyncStats, JiraSyncStats, PRSyncStats, SearchResult
+from devrag.types import DocIndexStats, IndexStats, IssueSyncStats, JiraSyncStats, PRSyncStats, SearchResult, SliteSyncStats
 
 
 def format_search_results(results: list[SearchResult]) -> str:
@@ -34,6 +34,23 @@ def format_search_results(results: list[SearchResult]) -> str:
                 lines.append(f"### {i}. [Jira {ticket_key}] Comment by {comment_author}")
             else:
                 lines.append(f"### {i}. [Jira {ticket_key}] {ticket_summary}")
+            lines.append("```")
+            text_lines = r.text.strip().split("\n")
+            preview = "\n".join(text_lines[:10])
+            if len(text_lines) > 10:
+                preview += "\n# ... (truncated)"
+            lines.append(preview)
+            lines.append("```")
+            lines.append("")
+        elif chunk_type == "slite_page":
+            page_title = r.metadata.get("page_title", "Untitled")
+            section_path = r.metadata.get("section_path", "")
+            page_url = r.metadata.get("page_url", "")
+            lines.append(f"### {i}. [Slite] {page_title}")
+            if section_path:
+                lines.append(f"*Section: {section_path}*")
+            if page_url:
+                lines.append(f"*URL: {page_url}*")
             lines.append("```")
             text_lines = r.text.strip().split("\n")
             preview = "\n".join(text_lines[:10])
@@ -129,6 +146,16 @@ def format_issue_sync_stats(stats: IssueSyncStats) -> str:
     ]
     if stats.issues_skipped:
         parts.append(f"Skipped {stats.issues_skipped} issues (PRs or unchanged)")
+    return ". ".join(parts) + "."
+
+
+def format_slite_sync_stats(stats: SliteSyncStats) -> str:
+    parts = [
+        f"Fetched {stats.pages_fetched} Slite pages",
+        f"Indexed {stats.pages_indexed} pages ({stats.chunks_created} chunks)",
+    ]
+    if stats.pages_skipped:
+        parts.append(f"Skipped {stats.pages_skipped} pages")
     return ". ".join(parts) + "."
 
 

@@ -73,3 +73,12 @@ class JiraSyncStats:
     tickets_indexed: int = 0
     tickets_skipped: int = 0
     chunks_created: int = 0
+
+
+@dataclass
+class SliteSyncStats:
+    """Statistics from a Slite page sync run."""
+    pages_fetched: int = 0
+    pages_indexed: int = 0
+    pages_skipped: int = 0
+    chunks_created: int = 0

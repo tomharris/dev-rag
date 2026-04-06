@@ -72,6 +72,15 @@ class JiraConfig:
 
 
 @dataclass
+class SliteConfig:
+    slite_token_env: str = "SLITE_TOKEN"
+    channel_ids: list[str] = field(default_factory=list)
+    backfill_days: int = 90
+    chunk_max_tokens: int = 512
+    chunk_overlap_tokens: int = 50
+
+
+@dataclass
 class DocumentsConfig:
     glob_patterns: list[str] = field(default_factory=lambda: [
         "**/*.md", "**/*.mdx", "**/*.txt", "**/*.rst", "**/*.html", "**/*.adoc",
@@ -89,6 +98,7 @@ class DevragConfig:
     prs: PrsConfig = field(default_factory=PrsConfig)
     issues: IssuesConfig = field(default_factory=IssuesConfig)
     jira: JiraConfig = field(default_factory=JiraConfig)
+    slite: SliteConfig = field(default_factory=SliteConfig)
     documents: DocumentsConfig = field(default_factory=DocumentsConfig)
 
 

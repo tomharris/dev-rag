@@ -1,6 +1,6 @@
 # DevRAG
 
-A local RAG system for developer teams that ingests **code**, **GitHub PRs**, **GitHub issues**, **Jira Cloud tickets**, and **documents** — surfaced through Claude Code slash commands and a standalone CLI. Designed for zero-friction adoption: index your repo, search immediately.
+A local RAG system for developer teams that ingests **code**, **GitHub PRs**, **GitHub issues**, **Jira Cloud tickets**, **Slite pages**, and **documents** — surfaced through Claude Code slash commands and a standalone CLI. Designed for zero-friction adoption: index your repo, search immediately.
 
 ## Why DevRAG?
 
@@ -8,7 +8,7 @@ Most code search tools treat source files as plain text. DevRAG uses **tree-sitt
 
 It combines **vector search** (semantic) with **BM25** (keyword) via Reciprocal Rank Fusion, which is critical for code where exact identifiers like `refreshToken` matter as much as the concept of "token refresh."
 
-PR history, issues, and Jira tickets are first-class data sources — encoding *why* code changed, what bugs and features are tracked, and what project management context exists.
+PR history, issues, Jira tickets, and Slite wiki pages are first-class data sources — encoding *why* code changed, what bugs and features are tracked, what project management context exists, and what internal knowledge base content says.
 
 ## Quick Start
 
@@ -65,11 +65,12 @@ devrag search "query"                      # Search all sources
 devrag search "query" --scope code         # Code only
 devrag search "query" --scope prs          # PR history only
 devrag search "query" --scope issues       # Issues only
+devrag search "query" --scope slite        # Slite pages only
 devrag search "query" --scope docs         # Documents only
 devrag search "query" --top-k 10           # More results
 ```
 
-The query router automatically classifies intent and targets relevant collections. "Why did we switch to Redis?" routes to PR history; "is there a bug with login?" routes to issues and Jira tickets; "what sprint is auth in?" routes to Jira; "how does the auth middleware work?" routes to code.
+The query router automatically classifies intent and targets relevant collections. "Why did we switch to Redis?" routes to PR history; "is there a bug with login?" routes to issues and Jira tickets; "what sprint is auth in?" routes to Jira; "what does our wiki say about deploys?" routes to Slite pages and documents; "how does the auth middleware work?" routes to code.
 
 ### Indexing
 
@@ -97,6 +98,11 @@ export JIRA_EMAIL=you@company.com
 export JIRA_TOKEN=your-api-token
 devrag index jira                          # Uses JQL from .devrag.yaml
 devrag index jira --since 180d             # Custom lookback
+
+# Slite pages (incremental, section-aware chunking)
+export SLITE_TOKEN=your-api-token
+devrag index slite                         # Last 90 days, all channels
+devrag index slite --since 30d             # Custom lookback
 ```
 
 Code indexing is **incremental** — file content hashes are tracked in SQLite, so unchanged files are skipped on re-index.
@@ -180,8 +186,9 @@ The `rag-first` skill fires automatically when Claude detects a codebase questio
              ▼
 ┌─────────────────────────────────────────────────────────────────────┐
 │                     INGESTION LAYER                                 │
-│  Code Indexer  PR Indexer  Issue Indexer  Jira Indexer  Doc Indexer  │
-│  (tree-sitter) (GitHub)   (GitHub)      (Jira Cloud)  (sections)   │
+│  Code     PR       Issue    Jira     Slite     Doc                   │
+│  Indexer  Indexer  Indexer  Indexer  Indexer   Indexer                │
+│  (AST)   (GitHub) (GitHub) (Cloud)  (REST)   (sections)             │
 │                                                                     │
 │  Ollama Embedder (nomic-embed-text, 768d)                          │
 └─────────────────────────────────────────────────────────────────────┘
@@ -198,6 +205,7 @@ The `rag-first` skill fires automatically when Claude detects a codebase questio
 | `issue_discussions` | Issue indexer | Issue comments |
 | `jira_descriptions` | Jira indexer | Jira ticket summaries and descriptions |
 | `jira_discussions` | Jira indexer | Jira ticket comments |
+| `slite_pages` | Slite indexer | Slite page sections (markdown) |
 | `documents` | Doc indexer | Markdown/text sections |
 
 ## Configuration
@@ -257,6 +265,13 @@ jira:
   jql: "project = DEV"            # JQL filter for scoping tickets
   backfill_days: 90
   chunk_max_tokens: 512
+
+slite:
+  slite_token_env: SLITE_TOKEN    # Env var for API token
+  channel_ids: []                 # Filter to specific channels (empty = all)
+  backfill_days: 90
+  chunk_max_tokens: 512
+  chunk_overlap_tokens: 50
 
 documents:
   glob_patterns: ["**/*.md", "**/*.mdx", "**/*.txt", "**/*.rst", "**/*.html", "**/*.adoc"]
