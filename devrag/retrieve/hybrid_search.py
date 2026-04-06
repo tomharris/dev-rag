@@ -20,7 +20,7 @@ class HybridSearch:
         self.embedder = embedder
         self.collection = collection
 
-    def search(self, query: str, top_k: int = 20, collections: list[str] | None = None) -> list[SearchResult]:
+    def search(self, query: str, top_k: int = 20, collections: list[str] | None = None, where: dict | None = None) -> list[SearchResult]:
         if collections is None:
             collections = [self.collection]
         query_embedding = self.embedder.embed_query(query)
@@ -28,7 +28,7 @@ class HybridSearch:
         all_vector_ranked: list[str] = []
         for coll in collections:
             vector_results = self.vector_store.query(
-                collection=coll, query_embedding=query_embedding, n_results=top_k,
+                collection=coll, query_embedding=query_embedding, n_results=top_k, where=where,
             )
             for i, doc_id in enumerate(vector_results.ids):
                 doc_lookup[doc_id] = (vector_results.documents[i], vector_results.metadatas[i])

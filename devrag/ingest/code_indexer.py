@@ -216,9 +216,12 @@ def _get_signature(node: Node, source_bytes: bytes) -> str:
     return text.split("\n")[0].strip()
 
 
-def _make_chunk_id(file_path: str, entity_name: str, line_start: int) -> str:
+def _make_chunk_id(file_path: str, entity_name: str, line_start: int, repo: str = "") -> str:
     """Deterministic SHA-256-based chunk ID."""
-    key = f"{file_path}:{entity_name}:{line_start}"
+    if repo:
+        key = f"{repo}:{file_path}:{entity_name}:{line_start}"
+    else:
+        key = f"{file_path}:{entity_name}:{line_start}"
     return hashlib.sha256(key.encode()).hexdigest()[:16]
 
 
@@ -342,7 +345,7 @@ def extract_chunks_from_file(
         if len(text) > max_chars:
             text = text[:max_chars] + "\n# ... (truncated)"
 
-        chunk_id = _make_chunk_id(str_file_path, entity_name, line_start)
+        chunk_id = _make_chunk_id(str_file_path, entity_name, line_start, repo=repo_name)
 
         metadata: dict[str, Any] = {
             "file_path": str_file_path,
@@ -379,7 +382,7 @@ def _whole_file_chunk(
     max_chars = max_tokens * CHARS_PER_TOKEN
     if len(text) > max_chars:
         text = text[:max_chars] + "\n# ... (truncated)"
-    chunk_id = _make_chunk_id(str_file_path, "__file__", 1)
+    chunk_id = _make_chunk_id(str_file_path, "__file__", 1, repo=repo_name)
     metadata: dict[str, Any] = {
         "file_path": str_file_path,
         "language": language,
@@ -442,6 +445,10 @@ class CodeIndexer:
         When *incremental* is True, files whose SHA-256 content hash has not
         changed since the last run are skipped.
         """
+        repo_name = repo_name or repo_path.name
+
+        self._meta.register_repo(repo_name, str(repo_path))
+
         stats = IndexStats()
         exclude = list(self._config.exclude_patterns) + _DEFAULT_EXCLUDE
 
@@ -455,11 +462,11 @@ class CodeIndexer:
 
         current_paths = {str(f) for f in supported_files}
 
-        # Detect removed files
-        previously_indexed = set(self._meta.get_all_indexed_files())
+        # Detect removed files — scoped to this repo only
+        previously_indexed = set(self._meta.get_indexed_files_for_repo(repo_name))
         removed = previously_indexed - current_paths
         for removed_path in removed:
-            self._remove_file(removed_path)
+            self._remove_file(removed_path, repo=repo_name)
             stats.files_removed += 1
 
         # Index / skip each file
@@ -468,7 +475,7 @@ class CodeIndexer:
             file_hash = self._hash_file(file_path)
 
             if incremental:
-                stored_hash = self._meta.get_file_hash(str_path)
+                stored_hash = self._meta.get_file_hash(str_path, repo=repo_name)
                 if stored_hash == file_hash:
                     stats.files_skipped += 1
                     continue
@@ -481,7 +488,7 @@ class CodeIndexer:
             if not chunks:
                 continue
 
-            self._index_chunks(chunks, str_path, file_hash)
+            self._index_chunks(chunks, str_path, file_hash, repo=repo_name)
             stats.files_indexed += 1
             stats.chunks_created += len(chunks)
 
@@ -496,27 +503,28 @@ class CodeIndexer:
         h.update(file_path.read_bytes())
         return h.hexdigest()
 
-    def _remove_file(self, file_path: str) -> None:
-        chunk_ids = self._meta.get_chunks_for_file(file_path)
+    def _remove_file(self, file_path: str, repo: str = "") -> None:
+        chunk_ids = self._meta.get_chunks_for_file(file_path, repo=repo)
         if chunk_ids:
             self._store.delete(_COLLECTION, chunk_ids)
-        self._meta.remove_file(file_path)
+        self._meta.remove_file(file_path, repo=repo)
 
     def _index_chunks(
         self,
         chunks: list[Chunk],
         file_path: str,
         file_hash: str,
+        repo: str = "",
     ) -> None:
         chunks = [c for c in chunks if c.text.strip()]
         if not chunks:
             return
 
         # Remove old chunks for this file first (handles re-indexing)
-        old_chunk_ids = self._meta.get_chunks_for_file(file_path)
+        old_chunk_ids = self._meta.get_chunks_for_file(file_path, repo=repo)
         if old_chunk_ids:
             self._store.delete(_COLLECTION, old_chunk_ids)
-            self._meta.remove_file(file_path)
+            self._meta.remove_file(file_path, repo=repo)
 
         texts = [c.text for c in chunks]
         embeddings = self._embedder.embed(texts)
@@ -539,7 +547,8 @@ class CodeIndexer:
                 file_path=file_path,
                 line_start=chunk.metadata.get("line_start", 0),
                 line_end=chunk.metadata.get("line_end", 0),
+                repo=repo,
             )
             self._meta.upsert_fts(chunk.id, chunk.text)
 
-        self._meta.set_file_hash(file_path, file_hash)
+        self._meta.set_file_hash(file_path, file_hash, repo=repo)

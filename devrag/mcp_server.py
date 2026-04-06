@@ -77,7 +77,7 @@ def _get_reranker() -> Reranker:
 
 
 @mcp.tool
-def search(query: str, scope: str = "all", top_k: int = 5) -> str:
+def search(query: str, scope: str = "all", top_k: int = 5, repo: str = "") -> str:
     """Search code, PRs, issues, and docs using hybrid retrieval.
 
     Args:
@@ -86,16 +86,18 @@ def search(query: str, scope: str = "all", top_k: int = 5) -> str:
                "code" searches code only, "prs" searches PRs only,
                "issues" searches issues only.
         top_k: Number of results to return.
+        repo: Optional repo name to filter results (empty = all repos).
     """
     config = _get_config()
     router = QueryRouter()
     collections = router.route(query, scope=scope)
+    where = {"repo": repo} if repo else None
     hybrid = HybridSearch(
         vector_store=_get_vector_store(),
         metadata_db=_get_metadata_db(),
         embedder=_get_embedder(),
     )
-    candidates = hybrid.search(query, top_k=config.retrieval.top_k, collections=collections)
+    candidates = hybrid.search(query, top_k=config.retrieval.top_k, collections=collections, where=where)
     if config.retrieval.rerank and candidates:
         reranker = _get_reranker()
         results = reranker.rerank(query, candidates, top_k=top_k)
@@ -105,12 +107,19 @@ def search(query: str, scope: str = "all", top_k: int = 5) -> str:
 
 
 @mcp.tool
-def index_repo(path: str = ".", incremental: bool = True) -> str:
+def index_repo(path: str = ".", incremental: bool = True, name: str = "") -> str:
     """Index a local code repository using AST-aware chunking.
 
     Parses source files with tree-sitter, extracts functions/classes/methods,
     and stores embeddings for semantic search. Uses incremental indexing
     to skip unchanged files.
+
+    Multiple repos can be indexed — each is tracked independently.
+
+    Args:
+        path: Path to the repository root.
+        incremental: Skip unchanged files (default True).
+        name: Repo name for multi-repo support (default: directory name).
     """
     repo_path = Path(path).resolve()
     if not repo_path.exists():
@@ -121,7 +130,7 @@ def index_repo(path: str = ".", incremental: bool = True) -> str:
         embedder=_get_embedder(),
         config=_get_config(),
     )
-    stats = indexer.index_repo(repo_path, incremental=incremental)
+    stats = indexer.index_repo(repo_path, incremental=incremental, repo_name=name)
     return format_index_stats(stats)
 
 
@@ -272,8 +281,16 @@ def status() -> str:
     slite_count = store.count("slite_pages")
     doc_count = store.count("documents")
     indexed_files = meta.get_all_indexed_files()
+    repos = meta.get_all_repos()
     lines = [
         f"Indexed files: {len(indexed_files)}",
+    ]
+    if repos:
+        lines.append(f"Indexed repos: {len(repos)}")
+        for repo_name, repo_path in repos:
+            repo_files = meta.get_indexed_files_for_repo(repo_name)
+            lines.append(f"  {repo_name}: {len(repo_files)} files ({repo_path})")
+    lines += [
         f"Code chunks: {chunk_count}",
         f"PR diff chunks: {pr_diff_count}",
         f"PR discussion chunks: {pr_disc_count}",

@@ -9,18 +9,78 @@ class MetadataDB:
         Path(db_path).parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(db_path)
         self._conn.execute("PRAGMA journal_mode=WAL")
+        self._migrate_add_repo_column()
         self._create_tables()
+
+    def _migrate_add_repo_column(self) -> None:
+        """Migrate file_hashes and chunk_sources to include repo column."""
+        cols = {
+            r[1]
+            for r in self._conn.execute("PRAGMA table_info(file_hashes)").fetchall()
+        }
+        if not cols or "repo" in cols:
+            return  # Table doesn't exist yet or already migrated
+
+        self._conn.executescript("""
+            ALTER TABLE file_hashes RENAME TO _file_hashes_old;
+
+            CREATE TABLE file_hashes (
+                repo TEXT NOT NULL DEFAULT '',
+                file_path TEXT NOT NULL,
+                hash TEXT NOT NULL,
+                last_indexed TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (repo, file_path)
+            );
+
+            INSERT INTO file_hashes (repo, file_path, hash, last_indexed)
+                SELECT '', file_path, hash, last_indexed FROM _file_hashes_old;
+
+            DROP TABLE _file_hashes_old;
+        """)
+
+        chunk_cols = {
+            r[1]
+            for r in self._conn.execute("PRAGMA table_info(chunk_sources)").fetchall()
+        }
+        if chunk_cols and "repo" not in chunk_cols:
+            self._conn.executescript("""
+                ALTER TABLE chunk_sources RENAME TO _chunk_sources_old;
+
+                CREATE TABLE chunk_sources (
+                    chunk_id TEXT PRIMARY KEY,
+                    repo TEXT NOT NULL DEFAULT '',
+                    file_path TEXT NOT NULL,
+                    line_start INTEGER,
+                    line_end INTEGER
+                );
+
+                INSERT INTO chunk_sources (chunk_id, repo, file_path, line_start, line_end)
+                    SELECT chunk_id, '', file_path, line_start, line_end FROM _chunk_sources_old;
+
+                DROP TABLE _chunk_sources_old;
+            """)
+
+        self._conn.commit()
 
     def _create_tables(self) -> None:
         self._conn.executescript("""
-            CREATE TABLE IF NOT EXISTS file_hashes (
-                file_path TEXT PRIMARY KEY,
-                hash TEXT NOT NULL,
+            CREATE TABLE IF NOT EXISTS code_repos (
+                repo TEXT PRIMARY KEY,
+                repo_path TEXT NOT NULL,
                 last_indexed TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS file_hashes (
+                repo TEXT NOT NULL DEFAULT '',
+                file_path TEXT NOT NULL,
+                hash TEXT NOT NULL,
+                last_indexed TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (repo, file_path)
             );
 
             CREATE TABLE IF NOT EXISTS chunk_sources (
                 chunk_id TEXT PRIMARY KEY,
+                repo TEXT NOT NULL DEFAULT '',
                 file_path TEXT NOT NULL,
                 line_start INTEGER,
                 line_end INTEGER
@@ -28,6 +88,9 @@ class MetadataDB:
 
             CREATE INDEX IF NOT EXISTS idx_chunk_sources_file
                 ON chunk_sources(file_path);
+
+            CREATE INDEX IF NOT EXISTS idx_chunk_sources_repo_file
+                ON chunk_sources(repo, file_path);
 
             CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts
                 USING fts5(chunk_id UNINDEXED, content);
@@ -103,39 +166,72 @@ class MetadataDB:
         """)
         self._conn.commit()
 
-    def get_file_hash(self, file_path: str) -> str | None:
-        row = self._conn.execute(
-            "SELECT hash FROM file_hashes WHERE file_path = ?", (file_path,)
-        ).fetchone()
-        return row[0] if row else None
-
-    def set_file_hash(self, file_path: str, hash_value: str) -> None:
+    def register_repo(self, repo: str, repo_path: str) -> None:
         self._conn.execute(
-            "INSERT OR REPLACE INTO file_hashes (file_path, hash) VALUES (?, ?)",
-            (file_path, hash_value),
+            "INSERT OR REPLACE INTO code_repos (repo, repo_path) VALUES (?, ?)",
+            (repo, repo_path),
         )
         self._conn.commit()
 
-    def remove_file(self, file_path: str) -> None:
-        self.delete_fts_for_file(file_path)
-        self._conn.execute("DELETE FROM chunk_sources WHERE file_path = ?", (file_path,))
-        self._conn.execute("DELETE FROM file_hashes WHERE file_path = ?", (file_path,))
+    def get_all_repos(self) -> list[tuple[str, str]]:
+        rows = self._conn.execute("SELECT repo, repo_path FROM code_repos").fetchall()
+        return [(r[0], r[1]) for r in rows]
+
+    def remove_repo(self, repo: str) -> None:
+        chunk_ids = self._conn.execute(
+            "SELECT chunk_id FROM chunk_sources WHERE repo = ?", (repo,)
+        ).fetchall()
+        if chunk_ids:
+            ids = [r[0] for r in chunk_ids]
+            self.delete_fts(ids)
+        self._conn.execute("DELETE FROM chunk_sources WHERE repo = ?", (repo,))
+        self._conn.execute("DELETE FROM file_hashes WHERE repo = ?", (repo,))
+        self._conn.execute("DELETE FROM code_repos WHERE repo = ?", (repo,))
         self._conn.commit()
+
+    def get_file_hash(self, file_path: str, repo: str = "") -> str | None:
+        row = self._conn.execute(
+            "SELECT hash FROM file_hashes WHERE repo = ? AND file_path = ?", (repo, file_path)
+        ).fetchone()
+        return row[0] if row else None
+
+    def set_file_hash(self, file_path: str, hash_value: str, repo: str = "") -> None:
+        self._conn.execute(
+            "INSERT OR REPLACE INTO file_hashes (repo, file_path, hash) VALUES (?, ?, ?)",
+            (repo, file_path, hash_value),
+        )
+        self._conn.commit()
+
+    def remove_file(self, file_path: str, repo: str = "") -> None:
+        self.delete_fts_for_file(file_path, repo=repo)
+        self._conn.execute(
+            "DELETE FROM chunk_sources WHERE repo = ? AND file_path = ?", (repo, file_path)
+        )
+        self._conn.execute(
+            "DELETE FROM file_hashes WHERE repo = ? AND file_path = ?", (repo, file_path)
+        )
+        self._conn.commit()
+
+    def get_indexed_files_for_repo(self, repo: str = "") -> list[str]:
+        rows = self._conn.execute(
+            "SELECT file_path FROM file_hashes WHERE repo = ?", (repo,)
+        ).fetchall()
+        return [r[0] for r in rows]
 
     def get_all_indexed_files(self) -> list[str]:
         rows = self._conn.execute("SELECT file_path FROM file_hashes").fetchall()
         return [r[0] for r in rows]
 
-    def set_chunk_source(self, chunk_id: str, file_path: str, line_start: int, line_end: int) -> None:
+    def set_chunk_source(self, chunk_id: str, file_path: str, line_start: int, line_end: int, repo: str = "") -> None:
         self._conn.execute(
-            "INSERT OR REPLACE INTO chunk_sources (chunk_id, file_path, line_start, line_end) VALUES (?, ?, ?, ?)",
-            (chunk_id, file_path, line_start, line_end),
+            "INSERT OR REPLACE INTO chunk_sources (chunk_id, repo, file_path, line_start, line_end) VALUES (?, ?, ?, ?, ?)",
+            (chunk_id, repo, file_path, line_start, line_end),
         )
         self._conn.commit()
 
-    def get_chunks_for_file(self, file_path: str) -> list[str]:
+    def get_chunks_for_file(self, file_path: str, repo: str = "") -> list[str]:
         rows = self._conn.execute(
-            "SELECT chunk_id FROM chunk_sources WHERE file_path = ?", (file_path,)
+            "SELECT chunk_id FROM chunk_sources WHERE repo = ? AND file_path = ?", (repo, file_path)
         ).fetchall()
         return [r[0] for r in rows]
 
@@ -149,8 +245,8 @@ class MetadataDB:
         self._conn.execute(f"DELETE FROM chunks_fts WHERE chunk_id IN ({placeholders})", chunk_ids)
         self._conn.commit()
 
-    def delete_fts_for_file(self, file_path: str) -> None:
-        chunk_ids = self.get_chunks_for_file(file_path)
+    def delete_fts_for_file(self, file_path: str, repo: str = "") -> None:
+        chunk_ids = self.get_chunks_for_file(file_path, repo=repo)
         if chunk_ids:
             self.delete_fts(chunk_ids)
 

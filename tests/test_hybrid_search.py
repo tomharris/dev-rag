@@ -67,7 +67,7 @@ def test_hybrid_search_with_no_bm25_results():
 
 def test_hybrid_search_multiple_collections():
     mock_store = MagicMock()
-    def mock_query(collection, query_embedding, n_results):
+    def mock_query(collection, query_embedding, n_results, where=None):
         if collection == "code_chunks":
             return QueryResult(ids=["code_1"], documents=["def auth(): pass"],
                 metadatas=[{"file_path": "a.py", "source_type": "code"}], distances=[0.1])
