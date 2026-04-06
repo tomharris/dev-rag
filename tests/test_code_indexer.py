@@ -186,6 +186,50 @@ def test_code_indexer_skips_empty_file(tmp_dir, indexer_deps):
     assert stats.chunks_created >= 1
 
 
+def test_code_indexer_multi_repo_no_cross_deletion(tmp_dir, indexer_deps):
+    """Indexing repo-b should not delete repo-a's data."""
+    store, meta, embedder = indexer_deps
+    import subprocess
+
+    # Create repo-a
+    repo_a = tmp_dir / "repo-a"
+    repo_a.mkdir()
+    subprocess.run(["git", "init", str(repo_a)], capture_output=True, check=True)
+    subprocess.run(["git", "config", "user.email", "t@t.com"], cwd=str(repo_a), capture_output=True)
+    subprocess.run(["git", "config", "user.name", "T"], cwd=str(repo_a), capture_output=True)
+    (repo_a / "main.py").write_text("def hello_a():\n    return 'a'\n")
+    subprocess.run(["git", "add", "."], cwd=str(repo_a), capture_output=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=str(repo_a), capture_output=True)
+
+    # Create repo-b
+    repo_b = tmp_dir / "repo-b"
+    repo_b.mkdir()
+    subprocess.run(["git", "init", str(repo_b)], capture_output=True, check=True)
+    subprocess.run(["git", "config", "user.email", "t@t.com"], cwd=str(repo_b), capture_output=True)
+    subprocess.run(["git", "config", "user.name", "T"], cwd=str(repo_b), capture_output=True)
+    (repo_b / "app.py").write_text("def hello_b():\n    return 'b'\n")
+    subprocess.run(["git", "add", "."], cwd=str(repo_b), capture_output=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=str(repo_b), capture_output=True)
+
+    indexer = CodeIndexer(store, meta, embedder)
+    stats_a = indexer.index_repo(repo_a, repo_name="repo-a")
+    assert stats_a.files_indexed >= 1
+    count_after_a = store.count("code_chunks")
+
+    stats_b = indexer.index_repo(repo_b, repo_name="repo-b")
+    assert stats_b.files_indexed >= 1
+    assert stats_b.files_removed == 0  # Must not remove repo-a's files
+
+    # Both repos' chunks should be present
+    assert store.count("code_chunks") >= count_after_a + stats_b.chunks_created
+
+    # Repo registry should have both
+    repos = meta.get_all_repos()
+    repo_names = {r[0] for r in repos}
+    assert "repo-a" in repo_names
+    assert "repo-b" in repo_names
+
+
 def test_code_indexer_detects_removed_files(tmp_dir, indexer_deps):
     store, meta, embedder = indexer_deps
     repo = tmp_dir / "repo"

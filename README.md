@@ -79,6 +79,8 @@ The query router automatically classifies intent and targets relevant collection
 devrag index repo .                        # Current directory
 devrag index repo /path/to/repo            # Specific path
 devrag index repo . --full                 # Force full re-index
+devrag index repo . --name my-repo         # Name for multi-repo support
+devrag index remove-repo my-repo           # Remove a repo from the index
 
 # Documents (section-aware splitting)
 devrag index docs ./specs                  # Default: **/*.md

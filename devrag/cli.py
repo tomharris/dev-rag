@@ -52,6 +52,7 @@ def search(
 def index_repo(
     path: str = typer.Argument(".", help="Path to repository"),
     full: bool = typer.Option(False, "--full", help="Full re-index (skip incremental)"),
+    name: str = typer.Option("", "--name", help="Repo name (default: directory name)"),
 ):
     """Index a local code repository."""
     from devrag.config import load_config
@@ -67,8 +68,30 @@ def index_repo(
     meta = MetadataDB(str(db_dir / "metadata.db"))
     embedder = OllamaEmbedder(model=config.embedding.model, ollama_url=config.embedding.ollama_url, batch_size=config.embedding.batch_size, max_tokens=config.embedding.max_tokens)
     indexer = CodeIndexer(store, meta, embedder, config.code)
-    stats = indexer.index_repo(Path(path).resolve(), incremental=not full)
+    stats = indexer.index_repo(Path(path).resolve(), incremental=not full, repo_name=name)
     typer.echo(format_index_stats(stats))
+
+
+@index_app.command("remove-repo")
+def remove_repo(
+    name: str = typer.Argument(..., help="Repo name to remove from index"),
+):
+    """Remove all indexed data for a repository."""
+    from devrag.config import load_config
+    from devrag.stores.factory import create_vector_store
+    from devrag.stores.metadata_db import MetadataDB
+    config = load_config(project_dir=Path.cwd())
+    store = create_vector_store(config)
+    db_dir = Path("~/.local/share/devrag").expanduser()
+    meta = MetadataDB(str(db_dir / "metadata.db"))
+    chunk_ids = meta._conn.execute(
+        "SELECT chunk_id FROM chunk_sources WHERE repo = ?", (name,)
+    ).fetchall()
+    if chunk_ids:
+        ids = [r[0] for r in chunk_ids]
+        store.delete("code_chunks", ids)
+    meta.remove_repo(name)
+    typer.echo(f"Removed repo '{name}' ({len(chunk_ids)} chunks deleted).")
 
 
 @index_app.command("docs")
@@ -235,8 +258,16 @@ def status():
     db_dir.mkdir(parents=True, exist_ok=True)
     meta = MetadataDB(str(db_dir / "metadata.db"))
     indexed_files = meta.get_all_indexed_files()
+    repos = meta.get_all_repos()
     lines = [
         f"Indexed files: {len(indexed_files)}",
+    ]
+    if repos:
+        lines.append(f"Indexed repos: {len(repos)}")
+        for repo_name, repo_path in repos:
+            repo_files = meta.get_indexed_files_for_repo(repo_name)
+            lines.append(f"  {repo_name}: {len(repo_files)} files ({repo_path})")
+    lines += [
         f"Code chunks: {store.count('code_chunks')}",
         f"PR diff chunks: {store.count('pr_diffs')}",
         f"PR discussion chunks: {store.count('pr_discussions')}",

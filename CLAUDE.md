@@ -34,7 +34,7 @@ DevRAG is a local RAG system that ingests code, GitHub PRs, GitHub issues, Jira 
 ### Three-Layer Pipeline
 
 **Ingestion** (`devrag/ingest/`) - Converts sources into embedded chunks:
-- `code_indexer.py` - AST-aware chunking via tree-sitter (50+ languages). Parses functions/classes/methods as semantic units, not raw text splits. Tracks file hashes in SQLite for incremental re-indexing.
+- `code_indexer.py` - AST-aware chunking via tree-sitter (50+ languages). Parses functions/classes/methods as semantic units, not raw text splits. Tracks file hashes in SQLite for incremental re-indexing. Supports multi-repo indexing — each repo is tracked independently via a `repo` column in `file_hashes`/`chunk_sources` tables and a `code_repos` registry. Default repo name is the directory name; override with `--name`.
 - `pr_indexer.py` - GitHub PR sync with cursor-based incremental fetching. Chunks PR descriptions, diff hunks, and review comments separately. Truncates chunks to `chunk_max_tokens` before embedding.
 - `issue_indexer.py` - GitHub issue sync with cursor-based incremental fetching. Chunks issue descriptions and comments separately into `issue_descriptions` and `issue_discussions` collections. Skips pull requests (GitHub Issues API returns PRs too). Supports `include_labels` / `exclude_labels` filtering.
 - `jira_indexer.py` - Jira Cloud ticket sync with cursor-based incremental fetching via JQL. Chunks ticket descriptions and comments into `jira_descriptions` and `jira_discussions` collections. Uses `JiraClient` (`devrag/utils/jira_client.py`) for REST API v3 with basic auth. Converts Atlassian Document Format (ADF) to plain text for embedding.
@@ -68,6 +68,7 @@ Nested dataclass hierarchy in `devrag/config.py`. Loaded from `~/.config/devrag/
 
 ## Key Patterns
 
+- **Multi-repo indexing**: Multiple repos can be indexed into a unified search space. Each repo is tracked independently — indexing repo-b won't delete repo-a's data. Repos are identified by directory name (or `--name` override). `code_repos` table serves as a registry. `devrag index remove-repo <name>` removes a specific repo.
 - **Incremental indexing**: File content hashes in SQLite skip unchanged files. PR, issue, Jira, and Slite sync use stored cursors.
 - **VectorStore Protocol**: Adding a new backend means implementing `upsert()`, `query()`, `delete()` and registering in `factory.py`.
 - **Text truncation safety**: PR chunks are truncated at creation time (`chunk_max_tokens`), and the embedder has a safety-net truncation at the model context limit (`embedding.max_tokens`). Empty/whitespace texts produce zero vectors.
