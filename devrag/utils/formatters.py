@@ -20,8 +20,8 @@ def format_search_results(results: list[SearchResult]) -> str:
                 lines.append(f"### {i}. [Issue #{issue_num}] {issue_title} (by {issue_author})")
             lines.append("```")
             text_lines = r.text.strip().split("\n")
-            preview = "\n".join(text_lines[:10])
-            if len(text_lines) > 10:
+            preview = "\n".join(text_lines[:50])
+            if len(text_lines) > 50:
                 preview += "\n# ... (truncated)"
             lines.append(preview)
             lines.append("```")
@@ -36,8 +36,8 @@ def format_search_results(results: list[SearchResult]) -> str:
                 lines.append(f"### {i}. [Jira {ticket_key}] {ticket_summary}")
             lines.append("```")
             text_lines = r.text.strip().split("\n")
-            preview = "\n".join(text_lines[:10])
-            if len(text_lines) > 10:
+            preview = "\n".join(text_lines[:50])
+            if len(text_lines) > 50:
                 preview += "\n# ... (truncated)"
             lines.append(preview)
             lines.append("```")
@@ -53,8 +53,8 @@ def format_search_results(results: list[SearchResult]) -> str:
                 lines.append(f"*URL: {page_url}*")
             lines.append("```")
             text_lines = r.text.strip().split("\n")
-            preview = "\n".join(text_lines[:10])
-            if len(text_lines) > 10:
+            preview = "\n".join(text_lines[:50])
+            if len(text_lines) > 50:
                 preview += "\n# ... (truncated)"
             lines.append(preview)
             lines.append("```")
@@ -73,8 +73,8 @@ def format_search_results(results: list[SearchResult]) -> str:
                 lines.append(f"### {i}. [PR #{pr_num}] {pr_title} — {file_path}")
             lines.append("```diff")
             text_lines = r.text.strip().split("\n")
-            preview = "\n".join(text_lines[:10])
-            if len(text_lines) > 10:
+            preview = "\n".join(text_lines[:50])
+            if len(text_lines) > 50:
                 preview += "\n# ... (truncated)"
             lines.append(preview)
             lines.append("```")
@@ -88,8 +88,8 @@ def format_search_results(results: list[SearchResult]) -> str:
                 lines.append(f"*Section: {section_path}*")
             lines.append("```")
             text_lines = r.text.strip().split("\n")
-            preview = "\n".join(text_lines[:10])
-            if len(text_lines) > 10:
+            preview = "\n".join(text_lines[:50])
+            if len(text_lines) > 50:
                 preview += "\n# ... (truncated)"
             lines.append(preview)
             lines.append("```")
@@ -105,8 +105,8 @@ def format_search_results(results: list[SearchResult]) -> str:
             lines.append(f"### {i}. {entity_name} ({location})")
             lines.append(f"```{language}")
             text_lines = r.text.strip().split("\n")
-            preview = "\n".join(text_lines[:10])
-            if len(text_lines) > 10:
+            preview = "\n".join(text_lines[:50])
+            if len(text_lines) > 50:
                 preview += "\n# ... (truncated)"
             lines.append(preview)
             lines.append("```")

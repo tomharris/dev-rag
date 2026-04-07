@@ -550,5 +550,6 @@ class CodeIndexer:
                 repo=repo,
             )
             self._meta.upsert_fts(chunk.id, chunk.text)
+            self._meta.set_chunk_collection(chunk.id, _COLLECTION)
 
         self._meta.set_file_hash(file_path, file_hash, repo=repo)

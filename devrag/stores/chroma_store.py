@@ -59,6 +59,21 @@ class ChromaStore:
             distances=results["distances"][0],
         )
 
+    def get_by_ids(self, collection: str, ids: list[str]) -> QueryResult:
+        if not ids:
+            return QueryResult(ids=[], documents=[], metadatas=[], distances=[])
+        try:
+            coll = self._client.get_collection(name=collection)
+        except Exception:
+            return QueryResult(ids=[], documents=[], metadatas=[], distances=[])
+        results = coll.get(ids=ids, include=["documents", "metadatas"])
+        return QueryResult(
+            ids=results["ids"],
+            documents=results["documents"],
+            metadatas=results["metadatas"],
+            distances=[],
+        )
+
     def delete(self, collection: str, ids: list[str]) -> None:
         try:
             coll = self._client.get_collection(name=collection)

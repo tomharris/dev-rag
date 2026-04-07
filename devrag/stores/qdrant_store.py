@@ -67,6 +67,21 @@ class QdrantStore:
             distances.append(point.score)
         return QueryResult(ids=ids, documents=documents, metadatas=metadatas, distances=distances)
 
+    def get_by_ids(self, collection: str, ids: list[str]) -> QueryResult:
+        if not ids or not self._client.collection_exists(collection):
+            return QueryResult(ids=[], documents=[], metadatas=[], distances=[])
+        qdrant_ids = [_to_uuid(id) for id in ids]
+        points = self._client.retrieve(collection_name=collection, ids=qdrant_ids, with_payload=True)
+        out_ids, documents, metadatas = [], [], []
+        for point in points:
+            payload = dict(point.payload) if point.payload else {}
+            original_id = payload.pop("_original_id", str(point.id))
+            doc = payload.pop("_document", "")
+            out_ids.append(original_id)
+            documents.append(doc)
+            metadatas.append(payload)
+        return QueryResult(ids=out_ids, documents=documents, metadatas=metadatas, distances=[])
+
     def delete(self, collection: str, ids: list[str]) -> None:
         if not self._client.collection_exists(collection):
             return

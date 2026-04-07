@@ -210,6 +210,7 @@ class SliteIndexer:
             for chunk in chunks:
                 self.metadata_db.set_slite_chunk_source(chunk.id, cursor_key, note_id)
                 self.metadata_db.upsert_fts(chunk.id, chunk.text)
+                self.metadata_db.set_chunk_collection(chunk.id, "slite_pages")
 
             stats.pages_indexed += 1
             stats.chunks_created += len(chunks)

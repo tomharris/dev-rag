@@ -150,6 +150,8 @@ class IssueIndexer:
             for chunk in chunks:
                 self.metadata_db.set_issue_chunk_source(chunk.id, repo, issue["number"])
                 self.metadata_db.upsert_fts(chunk.id, chunk.text)
+                coll = "issue_discussions" if chunk.metadata["chunk_type"] == "comment" else "issue_descriptions"
+                self.metadata_db.set_chunk_collection(chunk.id, coll)
 
             stats.issues_indexed += 1
             stats.chunks_created += len(chunks)

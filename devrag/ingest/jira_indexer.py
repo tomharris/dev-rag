@@ -163,6 +163,8 @@ class JiraIndexer:
             for chunk in chunks:
                 self.metadata_db.set_jira_chunk_source(chunk.id, instance_url, key)
                 self.metadata_db.upsert_fts(chunk.id, chunk.text)
+                coll = "jira_discussions" if chunk.metadata["chunk_type"] == "comment" else "jira_descriptions"
+                self.metadata_db.set_chunk_collection(chunk.id, coll)
 
             # Track latest updated timestamp for cursor
             if updated_at and updated_at > latest_updated:
