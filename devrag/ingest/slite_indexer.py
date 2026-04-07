@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 from datetime import datetime, timezone
+
+import httpx
 
 from devrag.ingest.doc_indexer import split_markdown, CHARS_PER_TOKEN
 from devrag.types import Chunk, SliteSyncStats
 from devrag.utils.slite_client import SliteClient
+
+logger = logging.getLogger(__name__)
 
 
 def _make_chunk_id(page_id: str, section_path: str, index: int) -> str:
@@ -158,7 +163,14 @@ class SliteIndexer:
             if updated_at and (latest_updated is None or updated_at > latest_updated):
                 latest_updated = updated_at
 
-            full_note = self.slite.get_note(note_id, fmt="md")
+            try:
+                full_note = self.slite.get_note(note_id, fmt="md")
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code >= 500:
+                    logger.warning("Slite API %d for note %s, skipping", exc.response.status_code, note_id)
+                    stats.pages_errored += 1
+                    continue
+                raise
             content = full_note.get("content", "")
             if not content or not content.strip():
                 stats.pages_skipped += 1

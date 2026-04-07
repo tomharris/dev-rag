@@ -81,4 +81,5 @@ class SliteSyncStats:
     pages_fetched: int = 0
     pages_indexed: int = 0
     pages_skipped: int = 0
+    pages_errored: int = 0
     chunks_created: int = 0
