@@ -171,6 +171,10 @@ class SliteIndexer:
                     stats.pages_errored += 1
                     continue
                 raise
+            except httpx.TimeoutException:
+                logger.warning("Slite API timeout for note %s, skipping", note_id)
+                stats.pages_errored += 1
+                continue
             content = full_note.get("content", "")
             if not content or not content.strip():
                 stats.pages_skipped += 1
