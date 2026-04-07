@@ -18,7 +18,11 @@ class SliteClient:
         )
 
     def _request(self, method: str, url: str, **kwargs) -> httpx.Response:
-        resp = self._client.request(method, url, **kwargs)
+        try:
+            resp = self._client.request(method, url, **kwargs)
+        except httpx.TimeoutException:
+            time.sleep(2)
+            resp = self._client.request(method, url, **kwargs)
         if resp.status_code == 429:
             retry_after = int(resp.headers.get("Retry-After", "5"))
             time.sleep(min(retry_after, 60))
