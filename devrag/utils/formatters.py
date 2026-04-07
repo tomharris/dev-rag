@@ -156,6 +156,8 @@ def format_slite_sync_stats(stats: SliteSyncStats) -> str:
     ]
     if stats.pages_skipped:
         parts.append(f"Skipped {stats.pages_skipped} pages")
+    if stats.pages_errored:
+        parts.append(f"Errored {stats.pages_errored} pages")
     return ". ".join(parts) + "."
 
 
