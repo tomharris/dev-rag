@@ -7,7 +7,7 @@ from pathlib import Path
 class MetadataDB:
     def __init__(self, db_path: str) -> None:
         Path(db_path).parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(db_path)
+        self._conn = sqlite3.connect(db_path, check_same_thread=False)
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._migrate_add_repo_column()
         self._create_tables()
