@@ -142,6 +142,8 @@ class PRIndexer:
             for chunk in chunks:
                 self.metadata_db.set_pr_chunk_source(chunk.id, repo, pr["number"])
                 self.metadata_db.upsert_fts(chunk.id, chunk.text)
+                coll = "pr_discussions" if chunk.metadata["chunk_type"] == "review_comment" else "pr_diffs"
+                self.metadata_db.set_chunk_collection(chunk.id, coll)
 
             stats.prs_indexed += 1
             stats.chunks_created += len(chunks)

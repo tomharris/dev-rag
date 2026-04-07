@@ -174,6 +174,7 @@ class DocIndexer:
             for chunk in chunks:
                 self.metadata_db.set_chunk_source(chunk.id, rel_path, 0, 0)
                 self.metadata_db.upsert_fts(chunk.id, chunk.text)
+                self.metadata_db.set_chunk_collection(chunk.id, "documents")
             stats.files_indexed += 1
             stats.chunks_created += len(chunks)
         return stats

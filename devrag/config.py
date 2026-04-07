@@ -29,6 +29,8 @@ class RetrievalConfig:
     final_k: int = 5
     rerank: bool = True
     reranker_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    rrf_k: int = 60
+    max_per_source: int = 2
 
 
 @dataclass

@@ -23,7 +23,7 @@ def _get_search_components():
     db_dir.mkdir(parents=True, exist_ok=True)
     meta = MetadataDB(str(db_dir / "metadata.db"))
     embedder = OllamaEmbedder(model=config.embedding.model, ollama_url=config.embedding.ollama_url, batch_size=config.embedding.batch_size, max_tokens=config.embedding.max_tokens)
-    hybrid = HybridSearch(store, meta, embedder)
+    hybrid = HybridSearch(store, meta, embedder, rrf_k=config.retrieval.rrf_k)
     reranker = Reranker(model_name=config.retrieval.reranker_model) if config.retrieval.rerank else None
     return hybrid, reranker, config
 
@@ -32,12 +32,14 @@ def _get_search_components():
 def search(
     query: str = typer.Argument(..., help="Search query text"),
     scope: str = typer.Option("all", help="Scope: all, code, prs, issues, docs"),
-    top_k: int = typer.Option(5, help="Number of results"),
+    top_k: int = typer.Option(0, help="Number of results (0 = use configured default)"),
 ):
     """Search code, PRs, issues, and docs."""
+    from devrag.retrieve.hybrid_search import deduplicate_results
     from devrag.retrieve.query_router import QueryRouter
     from devrag.utils.formatters import format_search_results
     hybrid, reranker, config = _get_search_components()
+    top_k = top_k if top_k > 0 else config.retrieval.final_k
     router = QueryRouter()
     collections = router.route(query, scope=scope)
     candidates = hybrid.search(query, top_k=config.retrieval.top_k, collections=collections)
@@ -45,6 +47,7 @@ def search(
         results = reranker.rerank(query, candidates, top_k=top_k)
     else:
         results = candidates[:top_k]
+    results = deduplicate_results(results, max_per_source=config.retrieval.max_per_source)
     typer.echo(format_search_results(results))
 
 

@@ -151,6 +151,14 @@ class MetadataDB:
             CREATE INDEX IF NOT EXISTS idx_slite_chunk_sources_workspace_page
                 ON slite_chunk_sources(workspace_id, page_id);
 
+            CREATE TABLE IF NOT EXISTS chunk_collections (
+                chunk_id TEXT PRIMARY KEY,
+                collection TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_chunk_collections_collection
+                ON chunk_collections(collection);
+
             CREATE TABLE IF NOT EXISTS query_metrics (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 query TEXT NOT NULL,
@@ -243,6 +251,7 @@ class MetadataDB:
     def delete_fts(self, chunk_ids: list[str]) -> None:
         placeholders = ",".join("?" for _ in chunk_ids)
         self._conn.execute(f"DELETE FROM chunks_fts WHERE chunk_id IN ({placeholders})", chunk_ids)
+        self._conn.execute(f"DELETE FROM chunk_collections WHERE chunk_id IN ({placeholders})", chunk_ids)
         self._conn.commit()
 
     def delete_fts_for_file(self, file_path: str, repo: str = "") -> None:
@@ -250,10 +259,40 @@ class MetadataDB:
         if chunk_ids:
             self.delete_fts(chunk_ids)
 
+    def set_chunk_collection(self, chunk_id: str, collection: str) -> None:
+        self._conn.execute(
+            "INSERT OR REPLACE INTO chunk_collections (chunk_id, collection) VALUES (?, ?)",
+            (chunk_id, collection),
+        )
+        self._conn.commit()
+
+    def delete_chunk_collections(self, chunk_ids: list[str]) -> None:
+        if not chunk_ids:
+            return
+        placeholders = ",".join("?" for _ in chunk_ids)
+        self._conn.execute(f"DELETE FROM chunk_collections WHERE chunk_id IN ({placeholders})", chunk_ids)
+        self._conn.commit()
+
     def search_fts(self, query: str, limit: int = 20) -> list[tuple[str, float]]:
         rows = self._conn.execute(
             "SELECT chunk_id, bm25(chunks_fts) as score FROM chunks_fts WHERE chunks_fts MATCH ? ORDER BY score LIMIT ?",
             (query, limit),
+        ).fetchall()
+        return [(r[0], r[1]) for r in rows]
+
+    def search_fts_scoped(self, query: str, collections: list[str], limit: int = 20) -> list[tuple[str, float]]:
+        """BM25 search scoped to specific collections. Falls back to unscoped if chunk_collections is empty."""
+        has_mappings = self._conn.execute("SELECT 1 FROM chunk_collections LIMIT 1").fetchone()
+        if not has_mappings:
+            return self.search_fts(query, limit)
+        placeholders = ",".join("?" for _ in collections)
+        rows = self._conn.execute(
+            f"SELECT f.chunk_id, bm25(chunks_fts) as score "
+            f"FROM chunks_fts f "
+            f"JOIN chunk_collections cc ON cc.chunk_id = f.chunk_id "
+            f"WHERE chunks_fts MATCH ? AND cc.collection IN ({placeholders}) "
+            f"ORDER BY score LIMIT ?",
+            [query, *collections, limit],
         ).fetchall()
         return [(r[0], r[1]) for r in rows]
 

@@ -13,7 +13,7 @@ from devrag.ingest.issue_indexer import IssueIndexer
 from devrag.ingest.jira_indexer import JiraIndexer
 from devrag.ingest.pr_indexer import PRIndexer
 from devrag.ingest.slite_indexer import SliteIndexer
-from devrag.retrieve.hybrid_search import HybridSearch
+from devrag.retrieve.hybrid_search import HybridSearch, deduplicate_results
 from devrag.retrieve.query_router import QueryRouter
 from devrag.retrieve.reranker import Reranker
 from devrag.stores.factory import create_vector_store
@@ -77,7 +77,7 @@ def _get_reranker() -> Reranker:
 
 
 @mcp.tool
-def search(query: str, scope: str = "all", top_k: int = 5, repo: str = "") -> str:
+def search(query: str, scope: str = "all", top_k: int = 0, repo: str = "") -> str:
     """Search code, PRs, issues, and docs using hybrid retrieval.
 
     Args:
@@ -85,10 +85,11 @@ def search(query: str, scope: str = "all", top_k: int = 5, repo: str = "") -> st
         scope: What to search. "all" auto-routes by intent,
                "code" searches code only, "prs" searches PRs only,
                "issues" searches issues only.
-        top_k: Number of results to return.
+        top_k: Number of results to return (0 = use configured default).
         repo: Optional repo name to filter results (empty = all repos).
     """
     config = _get_config()
+    top_k = top_k if top_k > 0 else config.retrieval.final_k
     router = QueryRouter()
     collections = router.route(query, scope=scope)
     where = {"repo": repo} if repo else None
@@ -96,6 +97,7 @@ def search(query: str, scope: str = "all", top_k: int = 5, repo: str = "") -> st
         vector_store=_get_vector_store(),
         metadata_db=_get_metadata_db(),
         embedder=_get_embedder(),
+        rrf_k=config.retrieval.rrf_k,
     )
     candidates = hybrid.search(query, top_k=config.retrieval.top_k, collections=collections, where=where)
     if config.retrieval.rerank and candidates:
@@ -103,6 +105,7 @@ def search(query: str, scope: str = "all", top_k: int = 5, repo: str = "") -> st
         results = reranker.rerank(query, candidates, top_k=top_k)
     else:
         results = candidates[:top_k]
+    results = deduplicate_results(results, max_per_source=config.retrieval.max_per_source)
     return format_search_results(results)
 
 
