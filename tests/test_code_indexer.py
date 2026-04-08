@@ -151,6 +151,32 @@ def test_extract_chunks_skips_empty_text_nodes(tmp_dir):
     assert filtered_chunks[0].metadata["entity_name"] == "bar"
 
 
+def test_exported_ts_declarations_no_duplicate_ids(tmp_dir):
+    """Exported TS declarations should not produce duplicate chunk IDs."""
+    code = '''export function processData(input: string): string {
+    return input.trim();
+}
+
+export class DataProcessor {
+    run(): void {
+        console.log("running");
+    }
+}
+
+export interface Config {
+    host: string;
+}
+'''
+    p = tmp_dir / "exports.ts"
+    p.write_text(code)
+    chunks = extract_chunks_from_file(p, max_tokens=512)
+    ids = [c.id for c in chunks]
+    assert len(ids) == len(set(ids)), f"Duplicate chunk IDs found: {ids}"
+    entity_names = [c.metadata["entity_name"] for c in chunks]
+    assert "processData" in entity_names
+    assert "DataProcessor" in entity_names
+
+
 def test_whole_file_chunk_skips_empty_file(tmp_dir):
     """Empty files should produce no chunks."""
     p = tmp_dir / "empty.py"

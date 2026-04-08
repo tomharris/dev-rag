@@ -85,7 +85,6 @@ ENTITY_NODE_TYPES: dict[str, list[str]] = {
         "class_declaration",
         "class_expression",
         "method_definition",
-        "export_statement",
         "interface_declaration",
         "type_alias_declaration",
     ],
@@ -96,7 +95,6 @@ ENTITY_NODE_TYPES: dict[str, list[str]] = {
         "class_declaration",
         "class_expression",
         "method_definition",
-        "export_statement",
         "interface_declaration",
         "type_alias_declaration",
     ],
@@ -245,6 +243,12 @@ def _collect_entity_nodes(
     }
 
     def walk(node: Node, inside_class: bool) -> None:
+        # Treat export_statement as transparent wrapper — descend into
+        # children so the real declaration is collected, not the wrapper.
+        if node.type == "export_statement":
+            for child in node.children:
+                walk(child, inside_class=False)
+            return
         if node.type in target_types:
             name = _get_entity_name(node, language)
             if name:
@@ -256,10 +260,6 @@ def _collect_entity_nodes(
                 if is_class:
                     for child in node.children:
                         walk(child, inside_class=True)
-                # For export_statement that wraps a class, descend to get the class
-                elif node.type == "export_statement":
-                    for child in node.children:
-                        walk(child, inside_class=False)
                 return  # don't double-count children of functions
         # Descend normally
         for child in node.children:
@@ -525,6 +525,13 @@ class CodeIndexer:
         if old_chunk_ids:
             self._store.delete(_COLLECTION, old_chunk_ids)
             self._meta.remove_file(file_path, repo=repo)
+
+        # Deduplicate by chunk ID (keep last occurrence) as safety net
+        seen: dict[str, int] = {}
+        for i, c in enumerate(chunks):
+            seen[c.id] = i
+        if len(seen) < len(chunks):
+            chunks = [chunks[i] for i in sorted(seen.values())]
 
         texts = [c.text for c in chunks]
         embeddings = self._embedder.embed(texts)
