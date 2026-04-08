@@ -37,6 +37,7 @@ class IndexStats:
     files_indexed: int = 0
     files_skipped: int = 0
     files_removed: int = 0
+    files_empty: int = 0
     chunks_created: int = 0
 
 

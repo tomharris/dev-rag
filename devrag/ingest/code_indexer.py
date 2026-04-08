@@ -131,7 +131,7 @@ def _get_parser(language: str) -> Parser | None:
         _parser_cache[language] = parser
         return parser
     except Exception as exc:
-        logger.debug("Cannot load language %r: %s", language, exc)
+        logger.info("Cannot load tree-sitter grammar for %r: %s", language, exc)
         return None
 
 
@@ -486,6 +486,8 @@ class CodeIndexer:
                 repo_name=repo_name,
             )
             if not chunks:
+                stats.files_empty += 1
+                logger.info("No chunks extracted from %s", file_path)
                 continue
 
             self._index_chunks(chunks, str_path, file_hash, repo=repo_name)
