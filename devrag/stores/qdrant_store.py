@@ -88,6 +88,10 @@ class QdrantStore:
         qdrant_ids = [_to_uuid(id) for id in ids]
         self._client.delete(collection_name=collection, points_selector=PointIdsList(points=qdrant_ids), wait=True)
 
+    def delete_collection(self, collection: str) -> None:
+        if self._client.collection_exists(collection):
+            self._client.delete_collection(collection_name=collection)
+
     def count(self, collection: str) -> int:
         if not self._client.collection_exists(collection):
             return 0

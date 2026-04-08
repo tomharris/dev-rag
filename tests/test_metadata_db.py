@@ -211,3 +211,37 @@ def test_delete_fts_for_file(tmp_dir):
     results = db.search_fts("text three", limit=5)
     assert len(results) == 1
     assert results[0][0] == "c3"
+
+
+def test_reset_all(tmp_dir):
+    db = MetadataDB(str(tmp_dir / "meta.db"))
+    # Populate various tables
+    db.register_repo("myrepo", "/path/to/repo")
+    db.set_file_hash("foo.py", "abc123", repo="myrepo")
+    db.set_chunk_source("c1", "foo.py", 1, 10, repo="myrepo")
+    db.upsert_fts("c1", "some code")
+    db.set_chunk_collection("c1", "code_chunks")
+    db.set_pr_sync_cursor("acme/backend", "2025-01-01")
+    db.set_pr_chunk_source("pr_c1", "acme/backend", 42)
+    db.set_issue_sync_cursor("acme/backend", "2025-01-01")
+    db.set_issue_chunk_source("issue_c1", "acme/backend", 99)
+
+    db.reset_all()
+
+    # Everything should be empty
+    assert db.get_all_repos() == []
+    assert db.get_file_hash("foo.py", repo="myrepo") is None
+    assert db.get_chunks_for_file("foo.py", repo="myrepo") == []
+    assert db.search_fts("some code", limit=5) == []
+    assert db.get_pr_sync_cursor("acme/backend") is None
+    assert db.get_chunks_for_pr("acme/backend", 42) == []
+    assert db.get_issue_sync_cursor("acme/backend") is None
+    assert db.get_chunks_for_issue("acme/backend", 99) == []
+
+
+def test_reset_all_preserves_query_metrics(tmp_dir):
+    db = MetadataDB(str(tmp_dir / "meta.db"))
+    db.log_query_metric("test query", "code_chunks", 10.0, 5.0, 3.0, 18.0, 5, "code")
+    db.reset_all()
+    stats = db.get_query_stats()
+    assert stats["total_queries"] == 1

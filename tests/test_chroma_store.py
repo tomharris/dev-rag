@@ -89,5 +89,22 @@ def test_delete(store):
     assert store.count("test") == 1
 
 
+def test_delete_collection(store):
+    store.upsert(
+        collection="test",
+        ids=["a", "b"],
+        embeddings=[[1.0, 0.0], [0.0, 1.0]],
+        documents=["a", "b"],
+        metadatas=[{}, {}],
+    )
+    assert store.count("test") == 2
+    store.delete_collection("test")
+    assert store.count("test") == 0
+
+
+def test_delete_collection_nonexistent(store):
+    store.delete_collection("nonexistent")  # Should not raise
+
+
 def test_count_nonexistent_collection(store):
     assert store.count("nonexistent") == 0
