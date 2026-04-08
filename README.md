@@ -115,6 +115,7 @@ Code indexing is **incremental** — file content hashes are tracked in SQLite, 
 devrag status                              # Show index stats
 devrag serve                               # Start MCP server for Claude Code
 devrag reindex --all                       # Clear all indexes and re-embed code repos (re-sync PRs/issues/Jira/Slite manually)
+devrag reindex --name my_project           # Re-index a single repo (preserves other repos and external sources)
 devrag config set embedding.model nomic-embed-text
 devrag config get vector_store.backend
 ```
