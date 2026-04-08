@@ -81,6 +81,12 @@ class ChromaStore:
             return
         coll.delete(ids=ids)
 
+    def delete_collection(self, collection: str) -> None:
+        try:
+            self._client.delete_collection(name=collection)
+        except Exception:
+            pass
+
     def count(self, collection: str) -> int:
         try:
             coll = self._client.get_collection(name=collection)

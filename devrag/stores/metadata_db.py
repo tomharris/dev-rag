@@ -197,6 +197,25 @@ class MetadataDB:
         self._conn.execute("DELETE FROM code_repos WHERE repo = ?", (repo,))
         self._conn.commit()
 
+    def reset_all(self) -> None:
+        """Clear all index state: chunks, cursors, file hashes, repos. Preserves query_metrics."""
+        self._conn.executescript("""
+            DELETE FROM chunks_fts;
+            DELETE FROM chunk_collections;
+            DELETE FROM chunk_sources;
+            DELETE FROM file_hashes;
+            DELETE FROM code_repos;
+            DELETE FROM pr_sync_cursors;
+            DELETE FROM pr_chunk_sources;
+            DELETE FROM issue_sync_cursors;
+            DELETE FROM issue_chunk_sources;
+            DELETE FROM jira_sync_cursors;
+            DELETE FROM jira_chunk_sources;
+            DELETE FROM slite_sync_cursors;
+            DELETE FROM slite_chunk_sources;
+        """)
+        self._conn.commit()
+
     def get_file_hash(self, file_path: str, repo: str = "") -> str | None:
         row = self._conn.execute(
             "SELECT hash FROM file_hashes WHERE repo = ? AND file_path = ?", (repo, file_path)

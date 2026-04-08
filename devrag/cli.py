@@ -345,21 +345,58 @@ app.add_typer(eval_app, name="eval")
 
 @app.command()
 def reindex(
-    all_collections: bool = typer.Option(False, "--all", help="Re-embed all collections"),
+    all_collections: bool = typer.Option(False, "--all", help="Clear all indexes, sync cursors, and vector collections, then re-index known code repos"),
 ):
-    """Re-index everything. Use after changing embedding models."""
+    """Reset and re-index everything. Use after changing embedding models or upgrading DevRAG."""
     from devrag.config import load_config
+    from devrag.ingest.code_indexer import CodeIndexer
+    from devrag.ingest.embedder import OllamaEmbedder
+    from devrag.retrieve.query_router import ALL_COLLECTIONS
+    from devrag.stores.factory import create_vector_store
     from devrag.stores.metadata_db import MetadataDB
+    from devrag.utils.formatters import format_index_stats
     if not all_collections:
         typer.echo("Use --all to clear all indexes and force re-embedding.")
         return
     config = load_config(project_dir=Path.cwd())
+    store = create_vector_store(config)
     db_dir = Path("~/.local/share/devrag").expanduser()
     db_dir.mkdir(parents=True, exist_ok=True)
     meta = MetadataDB(str(db_dir / "metadata.db"))
-    for file_path in meta.get_all_indexed_files():
-        meta.remove_file(file_path)
-    typer.echo("Cleared all file hashes. Run 'devrag index repo .' to re-index code.")
+
+    # Save registered repos before clearing
+    repos = meta.get_all_repos()
+
+    # Clear all metadata and vector collections
+    meta.reset_all()
+    for coll in ALL_COLLECTIONS:
+        store.delete_collection(coll)
+    typer.echo("Cleared all indexes and sync cursors.")
+
+    # Auto-reindex known code repos
+    if repos:
+        embedder = OllamaEmbedder(model=config.embedding.model, ollama_url=config.embedding.ollama_url,
+                                  batch_size=config.embedding.batch_size, max_tokens=config.embedding.max_tokens)
+        indexer = CodeIndexer(store, meta, embedder, config.code)
+        total_chunks = 0
+        for repo_name, repo_path in repos:
+            repo_dir = Path(repo_path)
+            if not repo_dir.exists():
+                typer.echo(f"  Skipping {repo_name} ({repo_path}) — directory not found.")
+                continue
+            typer.echo(f"  Re-indexing {repo_name} ({repo_path})...")
+            stats = indexer.index_repo(repo_dir, incremental=False, repo_name=repo_name)
+            total_chunks += stats.chunks_created
+            typer.echo(f"    {format_index_stats(stats)}")
+        typer.echo(f"Re-indexed {len(repos)} code repo(s) ({total_chunks} chunks).")
+    else:
+        typer.echo("No code repos registered. Run 'devrag index repo .' to index code.")
+
+    typer.echo("\nRe-sync external sources as needed:")
+    typer.echo("  devrag index prs <owner/repo>")
+    typer.echo("  devrag index issues <owner/repo>")
+    typer.echo("  devrag index jira")
+    typer.echo("  devrag index slite")
 
 
 @eval_app.command("run")
