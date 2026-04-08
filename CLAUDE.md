@@ -54,7 +54,7 @@ DevRAG is a local RAG system that ingests code, GitHub PRs, GitHub issues, Jira 
 
 ### Entry Points
 
-- **CLI**: `devrag/cli.py` - Typer app with subcommands: `search`, `index` (repo/docs/prs/issues/jira/slite), `status`, `config`, `serve`, `reindex`, `eval`. `reindex --all` clears all vector collections, metadata, and sync cursors, then re-indexes all registered code repos (non-incremental). External sources (PRs, issues, Jira, Slite) must be re-synced manually after.
+- **CLI**: `devrag/cli.py` - Typer app with subcommands: `search`, `index` (repo/docs/prs/issues/jira/slite), `status`, `config`, `serve`, `reindex`, `eval`. `reindex --all` clears all vector collections, metadata, and sync cursors, then re-indexes all registered code repos (non-incremental). External sources (PRs, issues, Jira, Slite) must be re-synced manually after. `reindex --name <repo>` re-indexes a single repo without affecting other repos or external sources.
 - **MCP Server**: `devrag/mcp_server.py` - FastMCP server with lazy-initialized global singletons for stores/embedders. Tools: `search()`, `index_repo()`, `index_docs()`, `sync_prs()`, `sync_issues()`, `sync_jira()`, `sync_slite()`, `status()`.
 - **Types**: `devrag/types.py` - Core dataclasses (`Chunk`, `SearchResult`, `IndexStats`).
 

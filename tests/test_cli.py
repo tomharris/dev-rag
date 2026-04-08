@@ -63,6 +63,12 @@ def test_cli_reindex_help():
     result = runner.invoke(app, ["reindex", "--help"])
     assert result.exit_code == 0
     assert "all" in result.stdout.lower()
+    assert "--name" in result.stdout
+
+
+def test_cli_reindex_no_args():
+    result = runner.invoke(app, ["reindex"])
+    assert result.exit_code == 1
 
 
 def test_cli_eval_run_help():

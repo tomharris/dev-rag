@@ -346,23 +346,60 @@ app.add_typer(eval_app, name="eval")
 @app.command()
 def reindex(
     all_collections: bool = typer.Option(False, "--all", help="Clear all indexes, sync cursors, and vector collections, then re-index known code repos"),
+    name: str = typer.Option("", "--name", help="Re-index a single repo by name (preserves other repos and external sources)"),
 ):
-    """Reset and re-index everything. Use after changing embedding models or upgrading DevRAG."""
+    """Reset and re-index everything, or re-index a single repo by name."""
     from devrag.config import load_config
     from devrag.ingest.code_indexer import CodeIndexer
     from devrag.ingest.embedder import OllamaEmbedder
-    from devrag.retrieve.query_router import ALL_COLLECTIONS
     from devrag.stores.factory import create_vector_store
     from devrag.stores.metadata_db import MetadataDB
     from devrag.utils.formatters import format_index_stats
-    if not all_collections:
-        typer.echo("Use --all to clear all indexes and force re-embedding.")
-        return
+
+    if not all_collections and not name:
+        typer.echo("Usage: devrag reindex --all | --name <repo>")
+        raise typer.Exit(1)
+
     config = load_config(project_dir=Path.cwd())
     store = create_vector_store(config)
     db_dir = Path("~/.local/share/devrag").expanduser()
     db_dir.mkdir(parents=True, exist_ok=True)
     meta = MetadataDB(str(db_dir / "metadata.db"))
+
+    if name:
+        # Single-repo reindex: remove then re-index non-incrementally
+        repos = meta.get_all_repos()
+        match = next(((n, p) for n, p in repos if n == name), None)
+        if not match:
+            registered = [n for n, _ in repos]
+            typer.echo(f"Repo '{name}' not found. Registered repos: {', '.join(registered) or '(none)'}")
+            raise typer.Exit(1)
+        repo_name, repo_path = match
+        repo_dir = Path(repo_path)
+        if not repo_dir.exists():
+            typer.echo(f"Directory not found: {repo_path}")
+            raise typer.Exit(1)
+
+        # Remove existing chunks and metadata for this repo
+        chunk_ids = meta._conn.execute(
+            "SELECT chunk_id FROM chunk_sources WHERE repo = ?", (name,)
+        ).fetchall()
+        if chunk_ids:
+            store.delete("code_chunks", [r[0] for r in chunk_ids])
+        meta.remove_repo(name)
+        typer.echo(f"Cleared {len(chunk_ids)} chunks for '{name}'.")
+
+        # Re-index
+        embedder = OllamaEmbedder(model=config.embedding.model, ollama_url=config.embedding.ollama_url,
+                                  batch_size=config.embedding.batch_size, max_tokens=config.embedding.max_tokens)
+        indexer = CodeIndexer(store, meta, embedder, config.code)
+        typer.echo(f"Re-indexing {repo_name} ({repo_path})...")
+        stats = indexer.index_repo(repo_dir, incremental=False, repo_name=repo_name)
+        typer.echo(format_index_stats(stats))
+        return
+
+    # --all: full reset
+    from devrag.retrieve.query_router import ALL_COLLECTIONS
 
     # Save registered repos before clearing
     repos = meta.get_all_repos()
