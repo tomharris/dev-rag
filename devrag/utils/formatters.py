@@ -120,6 +120,8 @@ def format_index_stats(stats: IndexStats) -> str:
         f"Indexed {stats.files_indexed} files ({stats.chunks_created} chunks)",
         f"Skipped {stats.files_skipped} unchanged files",
     ]
+    if stats.files_empty:
+        parts.append(f"{stats.files_empty} files produced no chunks")
     if stats.files_removed:
         parts.append(f"Removed {stats.files_removed} deleted files")
     return ". ".join(parts) + "."

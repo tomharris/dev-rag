@@ -28,6 +28,13 @@ def test_format_index_stats():
     assert "20" in output
     assert "78" in output
     assert "85" in output
+    assert "no chunks" not in output  # hidden when zero
+
+
+def test_format_index_stats_with_empty():
+    stats = IndexStats(files_scanned=100, files_indexed=15, files_skipped=78, files_empty=5, chunks_created=60)
+    output = format_index_stats(stats)
+    assert "5 files produced no chunks" in output
 
 
 def test_format_search_results_with_pr():
