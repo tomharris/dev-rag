@@ -1,6 +1,6 @@
 ---
-name: rag-search
 description: Search codebase knowledge (code, PRs, docs) using DevRAG
+model: haiku
 allowed-tools: mcp__devrag__search
 ---
 
