@@ -1,7 +1,7 @@
 ---
-name: rag-index
 description: Index a codebase, documents, or PRs for DevRAG search
-allowed-tools: mcp__devrag__index_repo, mcp__devrag__index_docs, mcp__devrag__sync_prs, mcp__devrag__status
+model: haiku
+allowed-tools: mcp__devrag__index_repo, mcp__devrag__index_docs, mcp__devrag__sync_prs, mcp__devrag__sync_issues, mcp__devrag__sync_jira, mcp__devrag__sync_slite, mcp__devrag__status
 ---
 
 Help the user index their codebase for search.

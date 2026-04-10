@@ -1,6 +1,6 @@
 ---
-name: rag-pr
 description: Search PR history for why code changed
+model: haiku
 allowed-tools: mcp__devrag__search
 ---
 
