@@ -18,6 +18,14 @@ def _make_chunk_id(page_id: str, section_path: str, index: int) -> str:
     return hashlib.sha256(raw.encode()).hexdigest()[:16]
 
 
+def _truncate_text(text: str, max_tokens: int) -> str:
+    max_chars = max_tokens * CHARS_PER_TOKEN
+    if len(text) > max_chars:
+        logger.debug("Truncating Slite chunk from %d to %d chars", len(text), max_chars)
+        return text[:max_chars] + "\n... (truncated)"
+    return text
+
+
 def chunk_slite_page(
     note: dict,
     max_tokens: int = 512,
@@ -198,7 +206,7 @@ class SliteIndexer:
                 stats.pages_skipped += 1
                 continue
 
-            texts = [c.text for c in chunks]
+            texts = [_truncate_text(c.text, self.chunk_max_tokens) for c in chunks]
             embeddings = self.embedder.embed(texts)
             self.vector_store.upsert(
                 collection="slite_pages",
