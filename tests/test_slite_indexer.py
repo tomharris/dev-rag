@@ -4,6 +4,7 @@ from devrag.ingest.slite_indexer import (
     SliteIndexer,
     _cursor_to_days_ago,
     _make_chunk_id,
+    _truncate_text,
     chunk_slite_page,
 )
 from devrag.utils.slite_client import SliteClient
@@ -73,6 +74,21 @@ def test_chunk_slite_page_long_section():
     assert len(chunks) > 1
     for chunk in chunks:
         assert chunk.metadata["chunk_type"] == "slite_page"
+
+
+def test_truncate_text_short_text_unchanged():
+    text = "Short text that fits."
+    result = _truncate_text(text, max_tokens=512)
+    assert result == text
+
+
+def test_truncate_text_long_text_truncated():
+    # 512 tokens * 4 chars/token = 2048 chars max
+    long_text = "x" * 3000
+    result = _truncate_text(long_text, max_tokens=512)
+    assert len(result) < len(long_text)
+    assert result.endswith("\n... (truncated)")
+    assert len(result) == 2048 + len("\n... (truncated)")
 
 
 # --- Cursor conversion tests ---
