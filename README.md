@@ -14,16 +14,18 @@ PR history, issues, Jira tickets, and Slite wiki pages are first-class data sour
 
 ### Install
 
+Install directly from GitHub (no clone required):
+
 ```bash
 # As a global CLI tool (recommended)
-uv tool install devrag
+uv tool install git+https://github.com/tomharris/dev-rag.git
 
 # Or run without installing
-uvx devrag --help
+uvx --from git+https://github.com/tomharris/dev-rag.git devrag --help
 
 # Or add as a project dependency
-uv add devrag
-# pip install devrag
+uv add git+https://github.com/tomharris/dev-rag.git
+# pip install git+https://github.com/tomharris/dev-rag.git
 ```
 
 For development (from source):
@@ -145,7 +147,11 @@ DevRAG ships as a [FastMCP](https://github.com/jlowin/fastmcp) server that integ
 ### Setup
 
 ```bash
-claude mcp add devrag -- uv run --with fastmcp fastmcp run devrag/mcp_server.py
+# If installed globally via `uv tool install`:
+claude mcp add devrag -- devrag serve
+
+# Or run on demand without installing:
+claude mcp add devrag -- uvx --from git+https://github.com/tomharris/dev-rag.git devrag serve
 ```
 
 ### Skills
