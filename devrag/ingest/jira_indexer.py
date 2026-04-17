@@ -64,6 +64,20 @@ def _inject_cursor_into_jql(jql: str, cursor_date: str) -> str:
     return jql + cursor_clause
 
 
+def _iso_to_jql_datetime(iso_date: str) -> str:
+    """Convert a Jira API ISO 8601 timestamp to JQL datetime format ('YYYY/MM/DD HH:MM').
+
+    Jira API returns updated timestamps like '2026-03-02T12:00:00.000+0000', but JQL's
+    datetime comparison requires 'YYYY/MM/DD HH:MM'. Passing an ISO string straight into
+    a JQL clause causes Jira to silently reject the filter, which breaks incremental sync.
+    """
+    normalized = iso_date.replace("Z", "+00:00")
+    if len(normalized) >= 5 and normalized[-5] in "+-" and normalized[-3] != ":":
+        normalized = normalized[:-2] + ":" + normalized[-2:]
+    dt = datetime.fromisoformat(normalized)
+    return dt.strftime("%Y/%m/%d %H:%M")
+
+
 def chunk_jira_ticket(issue: dict, instance_url: str, max_tokens: int = 512) -> list[Chunk]:
     chunks: list[Chunk] = []
     base_meta = _jira_base_metadata(issue, instance_url)
@@ -119,7 +133,8 @@ class JiraIndexer:
         cursor = self.metadata_db.get_jira_sync_cursor(cursor_key)
 
         if cursor:
-            cursor_date = cursor
+            # Stale cursors from pre-fix versions may be in ISO format; normalize defensively.
+            cursor_date = cursor if "T" not in cursor else _iso_to_jql_datetime(cursor)
         else:
             since_dt = datetime.now(timezone.utc) - timedelta(days=since_days)
             cursor_date = since_dt.strftime("%Y/%m/%d %H:%M")
@@ -130,7 +145,8 @@ class JiraIndexer:
         for issue in self.jira.search_issues(effective_jql, fields=_SEARCH_FIELDS):
             stats.tickets_fetched += 1
             key = issue["key"]
-            updated_at = issue.get("fields", {}).get("updated", "")
+            updated_at_iso = issue.get("fields", {}).get("updated", "")
+            updated_at = _iso_to_jql_datetime(updated_at_iso) if updated_at_iso else ""
 
             self.metadata_db.delete_chunks_for_jira_ticket(instance_url, key)
             chunks = chunk_jira_ticket(issue, instance_url, max_tokens=self.chunk_max_tokens)
