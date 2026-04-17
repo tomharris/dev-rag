@@ -199,16 +199,32 @@ def test_slite_indexer_incremental_sync(tmp_dir):
 
     indexer = SliteIndexer(store, meta, embedder, mock_slite)
 
-    # First sync
-    indexer.sync(since_days=90)
-    assert meta.get_slite_sync_cursor("default") is not None
+    # First sync — indexes the page, sets cursor
+    stats1 = indexer.sync(since_days=90)
+    assert stats1.pages_indexed == 1
+    cursor_after_first = meta.get_slite_sync_cursor("default")
+    assert cursor_after_first == "2026-04-01T12:00:00Z"
 
-    # Second sync — should use cursor
-    mock_slite.list_notes.return_value = iter([])
-    indexer.sync(since_days=90)
+    # Second sync — API returns the same page with same updatedAt; client-side filter should skip it
+    mock_slite.list_notes.return_value = iter([
+        {"id": "page-1", "title": "Guide", "url": "...", "updatedAt": "2026-04-01T12:00:00Z"},
+    ])
+    stats2 = indexer.sync(since_days=90)
+    assert stats2.pages_indexed == 0
+    assert stats2.pages_skipped == 1
+    assert stats2.pages_fetched == 0
+    # since_days_ago should be derived from cursor (much smaller than default 90)
     call_args = mock_slite.list_notes.call_args
-    assert call_args[1].get("since_days_ago") is not None
-    # The since_days_ago should be derived from cursor, not the default 90
+    assert 0 < call_args[1]["since_days_ago"] < 90
+
+    # Third sync — page has a newer updatedAt; should be re-indexed
+    mock_slite.list_notes.return_value = iter([
+        {"id": "page-1", "title": "Guide", "url": "...", "updatedAt": "2026-04-10T12:00:00Z"},
+    ])
+    stats3 = indexer.sync(since_days=90)
+    assert stats3.pages_indexed == 1
+    assert stats3.pages_skipped == 0
+    assert meta.get_slite_sync_cursor("default") == "2026-04-10T12:00:00Z"
 
 
 def test_slite_indexer_channel_filtering(tmp_dir):

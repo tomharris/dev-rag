@@ -164,9 +164,14 @@ class SliteIndexer:
             channel_ids=self.channel_ids or None,
             since_days_ago=since_days_ago,
         ):
-            stats.pages_fetched += 1
             note_id = note["id"]
             updated_at = note.get("updatedAt", "")
+
+            if cursor and updated_at and updated_at <= cursor:
+                stats.pages_skipped += 1
+                continue
+
+            stats.pages_fetched += 1
 
             if updated_at and (latest_updated is None or updated_at > latest_updated):
                 latest_updated = updated_at
