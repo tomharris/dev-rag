@@ -1,5 +1,10 @@
 from __future__ import annotations
 import uuid
+from qdrant_client import QdrantClient
+from qdrant_client.models import (
+    Distance, FieldCondition, Filter, MatchValue,
+    PointIdsList, PointStruct, VectorParams,
+)
 from devrag.types import QueryResult
 
 
@@ -7,21 +12,9 @@ def _to_uuid(string_id: str) -> str:
     """Convert a string ID to a deterministic UUID5 for Qdrant compatibility."""
     return str(uuid.uuid5(uuid.NAMESPACE_URL, string_id))
 
-try:
-    from qdrant_client import QdrantClient
-    from qdrant_client.models import (
-        Distance, FieldCondition, Filter, MatchValue,
-        PointIdsList, PointStruct, VectorParams,
-    )
-    HAS_QDRANT = True
-except ImportError:
-    HAS_QDRANT = False
-
 
 class QdrantStore:
     def __init__(self, url: str = "http://localhost:6333", embedding_dim: int = 768) -> None:
-        if not HAS_QDRANT:
-            raise ImportError("qdrant-client is required. Install with: pip install devrag[qdrant]")
         self._client = QdrantClient(url=url)
         self._embedding_dim = embedding_dim
 

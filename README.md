@@ -308,8 +308,6 @@ devrag config set vector_store.qdrant_url http://localhost:6333
 devrag reindex --all
 ```
 
-Install the Qdrant extra: `pip install devrag[qdrant]`
-
 The vector store is abstracted behind a `VectorStore` Protocol — switching backends is a config change, not a code change.
 
 ## Development

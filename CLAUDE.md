@@ -11,7 +11,6 @@ Always use `/rag-search` (DevRAG) as the FIRST tool when answering codebase ques
 ```bash
 uv sync                                    # Install dependencies
 uv sync --extra dev                        # Install with dev dependencies
-uv sync --extra qdrant                     # Install with Qdrant support
 uv run devrag --help                       # CLI help
 uv run devrag serve                        # Start MCP server
 ```
@@ -78,4 +77,4 @@ Nested dataclass hierarchy in `devrag/config.py`. Loaded from `~/.config/devrag/
 
 ## Dependencies
 
-Python 3.12+. Uses `hatchling` build backend. Key deps: `chromadb`, `fastmcp`, `tree-sitter` + `tree-sitter-language-pack`, `sentence-transformers`, `typer`, `httpx`, `gitpython`. Dev: `pytest`, `pytest-asyncio`, `respx`. Optional: `qdrant-client`.
+Python 3.12+. Uses `hatchling` build backend. Key deps: `chromadb`, `qdrant-client`, `fastmcp`, `tree-sitter` + `tree-sitter-language-pack`, `sentence-transformers`, `typer`, `httpx`, `gitpython`. Dev: `pytest`, `pytest-asyncio`, `respx`.
