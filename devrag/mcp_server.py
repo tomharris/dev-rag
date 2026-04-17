@@ -159,11 +159,15 @@ def index_docs(path: str, glob: str = "**/*.md") -> str:
 
 
 @mcp.tool
-def sync_prs(repo: str, since_days: int = 90) -> str:
+def sync_prs(repo: str, since_days: int | None = None) -> str:
     """Sync GitHub PRs for a repository.
 
     Fetches PR diffs, descriptions, and review comments, then indexes
     them for search. Uses cursor-based sync to avoid re-fetching.
+
+    If `since_days` is provided, it overrides the stored cursor (use for
+    backfill). If omitted, sync is incremental from the cursor (or a 90-day
+    lookback on first run).
 
     Requires GITHUB_TOKEN environment variable.
     """

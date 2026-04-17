@@ -94,3 +94,45 @@ def test_pr_indexer_sync(tmp_dir):
     assert store.count("pr_discussions") >= 1
     cursor = meta.get_pr_sync_cursor("acme/backend")
     assert cursor is not None
+
+
+def test_pr_indexer_uses_cursor_when_since_days_none(tmp_dir):
+    from devrag.stores.chroma_store import ChromaStore
+    from devrag.stores.metadata_db import MetadataDB
+    store = ChromaStore(persist_dir=str(tmp_dir / "chroma"))
+    meta = MetadataDB(str(tmp_dir / "meta.db"))
+    meta.set_pr_sync_cursor("acme/backend", "2026-03-15T10:00:00Z")
+    embedder = MagicMock()
+    embedder.embed = MagicMock(side_effect=lambda texts: [[0.1] * 768 for _ in texts])
+    mock_github = MagicMock()
+    mock_github.list_prs.return_value = []
+    indexer = PRIndexer(store, meta, embedder, mock_github)
+
+    indexer.sync("acme/backend", since_days=None)
+
+    # list_prs should have been called with since = cursor
+    call_kwargs = mock_github.list_prs.call_args.kwargs
+    assert call_kwargs.get("since") == "2026-03-15T10:00:00Z"
+
+
+def test_pr_indexer_since_days_overrides_cursor(tmp_dir):
+    from devrag.stores.chroma_store import ChromaStore
+    from devrag.stores.metadata_db import MetadataDB
+    store = ChromaStore(persist_dir=str(tmp_dir / "chroma"))
+    meta = MetadataDB(str(tmp_dir / "meta.db"))
+    # Cursor is set but caller explicitly asks for a 180-day backfill.
+    meta.set_pr_sync_cursor("acme/backend", "2026-03-15T10:00:00Z")
+    embedder = MagicMock()
+    embedder.embed = MagicMock(side_effect=lambda texts: [[0.1] * 768 for _ in texts])
+    mock_github = MagicMock()
+    mock_github.list_prs.return_value = []
+    indexer = PRIndexer(store, meta, embedder, mock_github)
+
+    indexer.sync("acme/backend", since_days=180)
+
+    # list_prs should have been called with a since *older than the cursor* (~now - 180d),
+    # not the cursor value.
+    call_kwargs = mock_github.list_prs.call_args.kwargs
+    since_passed = call_kwargs.get("since")
+    assert since_passed is not None
+    assert since_passed < "2026-03-15T10:00:00Z"
