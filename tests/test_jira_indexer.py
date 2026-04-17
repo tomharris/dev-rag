@@ -3,6 +3,7 @@ from unittest.mock import MagicMock
 from devrag.ingest.jira_indexer import (
     JiraIndexer,
     _inject_cursor_into_jql,
+    _iso_to_jql_datetime,
     _make_cursor_key,
     chunk_jira_ticket,
 )
@@ -247,3 +248,66 @@ def test_jira_indexer_incremental_sync(tmp_dir):
     call_args = mock_jira.search_issues.call_args
     effective_jql = call_args[0][0] if call_args[0] else call_args[1]["jql"]
     assert "updated >=" in effective_jql
+
+
+def test_iso_to_jql_datetime_plus_offset():
+    # Jira API typically returns offset without colon, e.g. '+0000'
+    assert _iso_to_jql_datetime("2026-03-02T12:00:00.000+0000") == "2026/03/02 12:00"
+
+
+def test_iso_to_jql_datetime_z_suffix():
+    assert _iso_to_jql_datetime("2026-03-02T12:00:00Z") == "2026/03/02 12:00"
+
+
+def test_iso_to_jql_datetime_with_colon_offset():
+    assert _iso_to_jql_datetime("2026-03-02T12:00:00+00:00") == "2026/03/02 12:00"
+
+
+def test_jira_indexer_recovers_from_stale_iso_cursor(tmp_dir):
+    """If a previous (buggy) run stored an ISO-formatted cursor, the next sync should
+    defensively normalize it rather than injecting invalid JQL."""
+    from devrag.stores.chroma_store import ChromaStore
+    from devrag.stores.metadata_db import MetadataDB
+    store = ChromaStore(persist_dir=str(tmp_dir / "chroma"))
+    meta = MetadataDB(str(tmp_dir / "meta.db"))
+    embedder = MagicMock()
+    embedder.embed = MagicMock(side_effect=lambda texts: [[0.1] * 768 for _ in texts])
+    mock_jira = MagicMock(spec=JiraClient)
+    mock_jira.search_issues.return_value = iter([])
+    indexer = JiraIndexer(store, meta, embedder, mock_jira)
+
+    cursor_key = _make_cursor_key(INSTANCE, "project = DEV")
+    meta.set_jira_sync_cursor(cursor_key, "2026-03-02T12:00:00.000+0000")
+
+    indexer.sync(INSTANCE, "project = DEV", since_days=90)
+    effective_jql = mock_jira.search_issues.call_args[0][0]
+    assert 'updated >= "2026/03/02 12:00"' in effective_jql
+
+
+def test_jira_indexer_stored_cursor_is_valid_jql_format(tmp_dir):
+    """Regression: cursor must be stored in JQL datetime format, not raw ISO from Jira API.
+    If this fails, the next sync's JQL clause will be malformed and incremental sync won't work."""
+    from devrag.stores.chroma_store import ChromaStore
+    from devrag.stores.metadata_db import MetadataDB
+    store = ChromaStore(persist_dir=str(tmp_dir / "chroma"))
+    meta = MetadataDB(str(tmp_dir / "meta.db"))
+    embedder = MagicMock()
+    embedder.embed = MagicMock(side_effect=lambda texts: [[0.1] * 768 for _ in texts])
+    mock_jira = MagicMock(spec=JiraClient)
+    mock_jira.search_issues.return_value = iter([
+        _make_jira_issue(key="DEV-1", updated="2026-03-02T12:00:00.000+0000"),
+    ])
+    indexer = JiraIndexer(store, meta, embedder, mock_jira)
+    indexer.sync(INSTANCE, "project = DEV", since_days=90)
+
+    cursor = meta.get_jira_sync_cursor(_make_cursor_key(INSTANCE, "project = DEV"))
+    # JQL format is 'YYYY/MM/DD HH:MM' — not ISO
+    assert cursor == "2026/03/02 12:00"
+
+    # Second sync should inject a valid-looking JQL cursor clause
+    mock_jira.search_issues.return_value = iter([])
+    indexer.sync(INSTANCE, "project = DEV", since_days=90)
+    effective_jql = mock_jira.search_issues.call_args[0][0]
+    assert 'updated >= "2026/03/02 12:00"' in effective_jql
+    # Must NOT contain ISO markers
+    assert "T" not in effective_jql.split("updated >=")[1].split('"')[1]
