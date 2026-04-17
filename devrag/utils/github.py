@@ -69,7 +69,22 @@ class GitHubClient:
                  direction: str = "desc", per_page: int = 100, since: str | None = None) -> list[dict]:
         params: dict = {"state": state, "sort": sort, "direction": direction, "per_page": per_page}
         url = f"{API_BASE}/repos/{repo}/pulls"
-        return self.paginate(url, params=params)
+        if since is None:
+            return self.paginate(url, params=params)
+        # GitHub's /pulls endpoint has no server-side `since` filter. Since sort=updated,
+        # direction=desc, we can stop paginating as soon as we see an item older than `since`.
+        items: list[dict] = []
+        current_url: str | None = url
+        current_params: dict | None = params
+        while current_url:
+            resp = self._request("GET", current_url, params=current_params)
+            for item in resp.json():
+                if item.get("updated_at", "") < since:
+                    return items
+                items.append(item)
+            current_url = _get_next_url(resp)
+            current_params = None
+        return items
 
     def get_pr_files(self, repo: str, pr_number: int) -> list[dict]:
         url = f"{API_BASE}/repos/{repo}/pulls/{pr_number}/files"

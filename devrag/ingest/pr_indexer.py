@@ -88,16 +88,18 @@ class PRIndexer:
         self.github = github_client
         self.chunk_max_tokens = chunk_max_tokens
 
-    def sync(self, repo: str, since_days: int = 90) -> PRSyncStats:
+    def sync(self, repo: str, since_days: int | None = None) -> PRSyncStats:
         stats = PRSyncStats()
-        cursor = self.metadata_db.get_pr_sync_cursor(repo)
-        if cursor:
-            since_date = cursor
+        if since_days is not None:
+            since_date = (datetime.now(timezone.utc) - timedelta(days=since_days)).isoformat()
         else:
-            since_dt = datetime.now(timezone.utc) - timedelta(days=since_days)
-            since_date = since_dt.isoformat()
+            cursor = self.metadata_db.get_pr_sync_cursor(repo)
+            if cursor:
+                since_date = cursor
+            else:
+                since_date = (datetime.now(timezone.utc) - timedelta(days=90)).isoformat()
 
-        prs = self.github.list_prs(repo, state="all", sort="updated")
+        prs = self.github.list_prs(repo, state="all", sort="updated", since=since_date)
         stats.prs_fetched = len(prs)
         latest_updated = since_date
 

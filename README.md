@@ -90,8 +90,8 @@ devrag index docs ./docs --glob "**/*.txt,**/*.rst"
 
 # GitHub PRs (incremental with cursor tracking)
 export GITHUB_TOKEN=ghp_xxx
-devrag index prs owner/repo                # Last 90 days
-devrag index prs owner/repo --since 180d   # Custom lookback
+devrag index prs owner/repo                # Incremental from cursor (90d on first run)
+devrag index prs owner/repo --since 180d   # Override cursor for backfill
 
 # GitHub Issues (incremental, skips PRs)
 devrag index issues owner/repo             # Last 90 days

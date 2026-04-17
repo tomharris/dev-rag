@@ -62,6 +62,43 @@ def test_pagination():
 
 
 @respx.mock
+def test_list_prs_since_short_circuits_pagination():
+    # Page 1 has a PR newer than `since`, and an older one that should trigger the early return.
+    # Page 2 (reachable via Link header) should NEVER be fetched.
+    page1_url = "https://api.github.com/repos/acme/backend/pulls"
+    page2_url = "https://api.github.com/repos/acme/backend/pulls?page=2"
+    page2_route = respx.get(page2_url).respond(json=[
+        {"number": 3, "title": "Very old", "updated_at": "2025-01-01T00:00:00Z"},
+    ])
+    respx.get(page1_url).respond(
+        json=[
+            {"number": 1, "title": "Newer",   "updated_at": "2026-03-10T00:00:00Z"},
+            {"number": 2, "title": "Too old", "updated_at": "2026-02-01T00:00:00Z"},
+        ],
+        headers={"link": f'<{page2_url}>; rel="next"'},
+    )
+    client = GitHubClient(token="test-token")
+    prs = client.list_prs("acme/backend", since="2026-03-01T00:00:00Z")
+    assert [p["number"] for p in prs] == [1]
+    assert page2_route.call_count == 0  # pagination short-circuited before next page
+
+
+@respx.mock
+def test_list_prs_since_none_uses_full_pagination():
+    # Regression: since=None should behave like before (walk all pages).
+    page1_url = "https://api.github.com/repos/acme/backend/pulls"
+    page2_url = "https://api.github.com/repos/acme/backend/pulls?page=2"
+    respx.get(page2_url).respond(json=[{"number": 2, "title": "PR 2", "updated_at": "2025-01-01T00:00:00Z"}])
+    respx.get(page1_url).respond(
+        json=[{"number": 1, "title": "PR 1", "updated_at": "2026-03-10T00:00:00Z"}],
+        headers={"link": f'<{page2_url}>; rel="next"'},
+    )
+    client = GitHubClient(token="test-token")
+    prs = client.list_prs("acme/backend")
+    assert [p["number"] for p in prs] == [1, 2]
+
+
+@respx.mock
 def test_rate_limit_backoff():
     reset_time = str(int(time.time()) + 1)
     call_count = 0

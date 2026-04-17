@@ -124,7 +124,7 @@ def index_docs_cmd(
 @index_app.command("prs")
 def index_prs(
     repo: str = typer.Argument(..., help="GitHub repo (owner/name)"),
-    since: str = typer.Option("90d", help="Lookback period (e.g. 90d)"),
+    since: str | None = typer.Option(None, help="Lookback period (e.g. 90d). If set, overrides the stored cursor; otherwise incremental sync from cursor (or 90d on first run)."),
 ):
     """Sync GitHub PRs for a repository."""
     from devrag.config import load_config
@@ -144,7 +144,7 @@ def index_prs(
     db_dir.mkdir(parents=True, exist_ok=True)
     meta = MetadataDB(str(db_dir / "metadata.db"))
     embedder = OllamaEmbedder(model=config.embedding.model, ollama_url=config.embedding.ollama_url, batch_size=config.embedding.batch_size, max_tokens=config.embedding.max_tokens)
-    days = int(since.rstrip("d"))
+    days = int(since.rstrip("d")) if since else None
     github = GitHubClient(token=token)
     indexer = PRIndexer(store, meta, embedder, github, chunk_max_tokens=config.prs.chunk_max_tokens)
     stats = indexer.sync(repo, since_days=days)
