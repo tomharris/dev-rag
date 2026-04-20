@@ -204,9 +204,9 @@ def test_jql_cursor_injection_with_order_by():
 # --- Integration tests ---
 
 def test_jira_indexer_sync(tmp_dir):
-    from devrag.stores.chroma_store import ChromaStore
+    from devrag.stores.qdrant_store import QdrantStore
     from devrag.stores.metadata_db import MetadataDB
-    store = ChromaStore(persist_dir=str(tmp_dir / "chroma"))
+    store = QdrantStore(path=str(tmp_dir / "qdrant"), embedding_dim=768)
     meta = MetadataDB(str(tmp_dir / "meta.db"))
     embedder = MagicMock()
     embedder.embed = MagicMock(side_effect=lambda texts: [[0.1] * 768 for _ in texts])
@@ -226,9 +226,9 @@ def test_jira_indexer_sync(tmp_dir):
 
 
 def test_jira_indexer_incremental_sync(tmp_dir):
-    from devrag.stores.chroma_store import ChromaStore
+    from devrag.stores.qdrant_store import QdrantStore
     from devrag.stores.metadata_db import MetadataDB
-    store = ChromaStore(persist_dir=str(tmp_dir / "chroma"))
+    store = QdrantStore(path=str(tmp_dir / "qdrant"), embedding_dim=768)
     meta = MetadataDB(str(tmp_dir / "meta.db"))
     embedder = MagicMock()
     embedder.embed = MagicMock(side_effect=lambda texts: [[0.1] * 768 for _ in texts])
@@ -266,9 +266,9 @@ def test_iso_to_jql_datetime_with_colon_offset():
 def test_jira_indexer_recovers_from_stale_iso_cursor(tmp_dir):
     """If a previous (buggy) run stored an ISO-formatted cursor, the next sync should
     defensively normalize it rather than injecting invalid JQL."""
-    from devrag.stores.chroma_store import ChromaStore
+    from devrag.stores.qdrant_store import QdrantStore
     from devrag.stores.metadata_db import MetadataDB
-    store = ChromaStore(persist_dir=str(tmp_dir / "chroma"))
+    store = QdrantStore(path=str(tmp_dir / "qdrant"), embedding_dim=768)
     meta = MetadataDB(str(tmp_dir / "meta.db"))
     embedder = MagicMock()
     embedder.embed = MagicMock(side_effect=lambda texts: [[0.1] * 768 for _ in texts])
@@ -287,9 +287,9 @@ def test_jira_indexer_recovers_from_stale_iso_cursor(tmp_dir):
 def test_jira_indexer_stored_cursor_is_valid_jql_format(tmp_dir):
     """Regression: cursor must be stored in JQL datetime format, not raw ISO from Jira API.
     If this fails, the next sync's JQL clause will be malformed and incremental sync won't work."""
-    from devrag.stores.chroma_store import ChromaStore
+    from devrag.stores.qdrant_store import QdrantStore
     from devrag.stores.metadata_db import MetadataDB
-    store = ChromaStore(persist_dir=str(tmp_dir / "chroma"))
+    store = QdrantStore(path=str(tmp_dir / "qdrant"), embedding_dim=768)
     meta = MetadataDB(str(tmp_dir / "meta.db"))
     embedder = MagicMock()
     embedder.embed = MagicMock(side_effect=lambda texts: [[0.1] * 768 for _ in texts])

@@ -14,8 +14,16 @@ def _to_uuid(string_id: str) -> str:
 
 
 class QdrantStore:
-    def __init__(self, url: str = "http://localhost:6333", embedding_dim: int = 768) -> None:
-        self._client = QdrantClient(url=url)
+    def __init__(
+        self,
+        url: str | None = None,
+        path: str | None = None,
+        embedding_dim: int = 768,
+    ) -> None:
+        if path:
+            self._client = QdrantClient(path=path)
+        else:
+            self._client = QdrantClient(url=url or "http://localhost:6333")
         self._embedding_dim = embedding_dim
 
     def _ensure_collection(self, collection: str) -> None:

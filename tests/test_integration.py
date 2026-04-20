@@ -10,7 +10,7 @@ from devrag.config import DevragConfig
 from devrag.ingest.code_indexer import CodeIndexer
 from devrag.ingest.embedder import OllamaEmbedder
 from devrag.retrieve.hybrid_search import HybridSearch
-from devrag.stores.chroma_store import ChromaStore
+from devrag.stores.qdrant_store import QdrantStore
 from devrag.stores.metadata_db import MetadataDB
 
 pytestmark = pytest.mark.skipif(
@@ -99,7 +99,7 @@ class ConnectionPool:
 
 @pytest.fixture
 def e2e_components(tmp_dir):
-    store = ChromaStore(persist_dir=str(tmp_dir / "chroma"))
+    store = QdrantStore(path=str(tmp_dir / "qdrant"), embedding_dim=768)
     meta = MetadataDB(str(tmp_dir / "meta.db"))
     embedder = OllamaEmbedder(model="nomic-embed-text")
     return store, meta, embedder

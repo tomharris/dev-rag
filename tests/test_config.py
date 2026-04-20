@@ -9,7 +9,8 @@ def test_default_config_has_expected_values():
     assert config.embedding.provider == "ollama"
     assert config.embedding.ollama_url == "http://localhost:11434"
     assert config.embedding.batch_size == 64
-    assert config.vector_store.backend == "chromadb"
+    assert config.vector_store.qdrant_url == "http://localhost:6333"
+    assert config.vector_store.qdrant_path == ""
     assert config.retrieval.top_k == 20
     assert config.retrieval.final_k == 5
     assert config.retrieval.rerank is True
@@ -35,7 +36,7 @@ retrieval:
     assert config.embedding.provider == "sentence-transformers"
     assert config.retrieval.top_k == 30
     assert config.retrieval.final_k == 10
-    assert config.vector_store.backend == "chromadb"
+    assert config.vector_store.qdrant_url == "http://localhost:6333"
     assert config.code.chunk_max_tokens == 512
 
 

@@ -68,17 +68,15 @@ def test_chunk_text_includes_context(sample_python_file):
 # --- Integration tests for CodeIndexer class ---
 
 from devrag.ingest.code_indexer import CodeIndexer
-from devrag.stores.chroma_store import ChromaStore
 from devrag.stores.metadata_db import MetadataDB
 
 
 @pytest.fixture
-def indexer_deps(tmp_dir):
-    store = ChromaStore(persist_dir=str(tmp_dir / "chroma"))
+def indexer_deps(tmp_dir, vector_store):
     meta = MetadataDB(str(tmp_dir / "meta.db"))
     embedder = MagicMock()
     embedder.embed = MagicMock(side_effect=lambda texts: [[0.1] * 768 for _ in texts])
-    return store, meta, embedder
+    return vector_store, meta, embedder
 
 
 def test_code_indexer_indexes_repo(tmp_dir, indexer_deps):
