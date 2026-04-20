@@ -1,6 +1,6 @@
 # DevRAG
 
-A local RAG system for developer teams that ingests **code**, **GitHub PRs**, **GitHub issues**, **Jira Cloud tickets**, **Slite pages**, and **documents** — surfaced through Claude Code slash commands and a standalone CLI. Designed for zero-friction adoption: index your repo, search immediately.
+A local RAG system for developer teams that ingests **code**, **GitHub PRs**, **GitHub issues**, **Jira Cloud tickets**, **Slite pages**, **documents**, and **Claude Code session logs** — surfaced through Claude Code slash commands and a standalone CLI. Designed for zero-friction adoption: index your repo, search immediately.
 
 ## Why DevRAG?
 
@@ -69,7 +69,14 @@ devrag search "query" --scope prs          # PR history only
 devrag search "query" --scope issues       # Issues only
 devrag search "query" --scope slite        # Slite pages only
 devrag search "query" --scope docs         # Documents only
+devrag search "query" --scope sessions     # Claude Code session logs only
 devrag search "query" --top-k 10           # More results
+
+# Narrow with metadata filters (all optional, AND-combined)
+devrag search "auth" --repo myrepo --chunk-type diff
+devrag search "bug" --pr-number 1234
+devrag search "refund flow" --ticket-key PROJ-123
+devrag search "deploy" --session-id <uuid>
 ```
 
 The query router automatically classifies intent and targets relevant collections. "Why did we switch to Redis?" routes to PR history; "is there a bug with login?" routes to issues and Jira tickets; "what sprint is auth in?" routes to Jira; "what does our wiki say about deploys?" routes to Slite pages and documents; "how does the auth middleware work?" routes to code.
@@ -107,6 +114,11 @@ devrag index jira --since 180d             # Custom lookback
 export SLITE_TOKEN=your-api-token
 devrag index slite                         # Last 90 days, all channels
 devrag index slite --since 30d             # Custom lookback
+
+# Claude Code session logs (local JSONL, incremental via file mtime)
+devrag index sessions                      # Incremental from cursor (60d first run)
+devrag index sessions --since 30d          # Override cursor
+devrag index sessions --logs-dir /custom/path
 ```
 
 Code indexing is **incremental** — file content hashes are tracked in SQLite, so unchanged files are skipped on re-index.
@@ -216,6 +228,7 @@ The `rag-first` skill fires automatically when Claude detects a codebase questio
 | `jira_discussions` | Jira indexer | Jira ticket comments |
 | `slite_pages` | Slite indexer | Slite page sections (markdown) |
 | `documents` | Doc indexer | Markdown/text sections |
+| `session_logs` | Sessions indexer | Claude Code user↔assistant exchanges from local JSONL |
 
 ## Configuration
 
@@ -281,6 +294,11 @@ slite:
   backfill_days: 90
   chunk_max_tokens: 512
   chunk_overlap_tokens: 50
+
+sessions:
+  logs_dir: ~/.claude/projects    # Claude Code JSONL log directory
+  backfill_days: 60
+  chunk_max_tokens: 512
 
 documents:
   glob_patterns: ["**/*.md", "**/*.mdx", "**/*.txt", "**/*.rst", "**/*.html", "**/*.adoc"]

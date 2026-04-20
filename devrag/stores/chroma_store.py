@@ -46,7 +46,8 @@ class ChromaStore:
             "include": ["documents", "metadatas", "distances"],
         }
         if where:
-            kwargs["where"] = where
+            # ChromaDB requires $and when combining multiple filters.
+            kwargs["where"] = where if len(where) == 1 else {"$and": [{k: v} for k, v in where.items()]}
 
         if coll.count() == 0:
             return QueryResult(ids=[], documents=[], metadatas=[], distances=[])

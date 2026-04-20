@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from devrag.types import DocIndexStats, IndexStats, IssueSyncStats, JiraSyncStats, PRSyncStats, SearchResult, SliteSyncStats
+from devrag.types import DocIndexStats, IndexStats, IssueSyncStats, JiraSyncStats, PRSyncStats, SearchResult, SessionSyncStats, SliteSyncStats
 
 
 def format_search_results(results: list[SearchResult]) -> str:
@@ -34,6 +34,25 @@ def format_search_results(results: list[SearchResult]) -> str:
                 lines.append(f"### {i}. [Jira {ticket_key}] Comment by {comment_author}")
             else:
                 lines.append(f"### {i}. [Jira {ticket_key}] {ticket_summary}")
+            lines.append("```")
+            text_lines = r.text.strip().split("\n")
+            preview = "\n".join(text_lines[:50])
+            if len(text_lines) > 50:
+                preview += "\n# ... (truncated)"
+            lines.append(preview)
+            lines.append("```")
+            lines.append("")
+        elif chunk_type == "session_exchange":
+            session_id = r.metadata.get("session_id", "?")
+            project_dir = r.metadata.get("project_dir", "")
+            timestamp = r.metadata.get("timestamp", "")
+            git_branch = r.metadata.get("git_branch", "")
+            header = f"### {i}. [Session {str(session_id)[:8]}] {project_dir}"
+            if git_branch:
+                header += f" ({git_branch})"
+            lines.append(header)
+            if timestamp:
+                lines.append(f"*{timestamp}*")
             lines.append("```")
             text_lines = r.text.strip().split("\n")
             preview = "\n".join(text_lines[:50])
@@ -160,6 +179,16 @@ def format_slite_sync_stats(stats: SliteSyncStats) -> str:
         parts.append(f"Skipped {stats.pages_skipped} pages")
     if stats.pages_errored:
         parts.append(f"Errored {stats.pages_errored} pages")
+    return ". ".join(parts) + "."
+
+
+def format_session_sync_stats(stats: SessionSyncStats) -> str:
+    parts = [
+        f"Scanned {stats.files_scanned} session files",
+        f"Indexed {stats.files_indexed} files ({stats.sessions_indexed} sessions, {stats.chunks_created} chunks)",
+    ]
+    if stats.files_skipped:
+        parts.append(f"Skipped {stats.files_skipped} empty files")
     return ". ".join(parts) + "."
 
 

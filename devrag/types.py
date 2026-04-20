@@ -84,3 +84,13 @@ class SliteSyncStats:
     pages_skipped: int = 0
     pages_errored: int = 0
     chunks_created: int = 0
+
+
+@dataclass
+class SessionSyncStats:
+    """Statistics from a Claude Code session-log sync run."""
+    files_scanned: int = 0
+    files_indexed: int = 0
+    files_skipped: int = 0
+    sessions_indexed: int = 0
+    chunks_created: int = 0

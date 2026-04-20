@@ -151,6 +151,20 @@ class MetadataDB:
             CREATE INDEX IF NOT EXISTS idx_slite_chunk_sources_workspace_page
                 ON slite_chunk_sources(workspace_id, page_id);
 
+            CREATE TABLE IF NOT EXISTS session_sync_cursors (
+                cursor_key TEXT PRIMARY KEY,
+                last_synced TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS session_chunk_sources (
+                chunk_id TEXT PRIMARY KEY,
+                cursor_key TEXT NOT NULL,
+                session_id TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_session_chunk_sources_cursor_session
+                ON session_chunk_sources(cursor_key, session_id);
+
             CREATE TABLE IF NOT EXISTS chunk_collections (
                 chunk_id TEXT PRIMARY KEY,
                 collection TEXT NOT NULL
@@ -213,6 +227,8 @@ class MetadataDB:
             DELETE FROM jira_chunk_sources;
             DELETE FROM slite_sync_cursors;
             DELETE FROM slite_chunk_sources;
+            DELETE FROM session_sync_cursors;
+            DELETE FROM session_chunk_sources;
         """)
         self._conn.commit()
 
@@ -466,6 +482,43 @@ class MetadataDB:
                 chunk_ids,
             )
             self._conn.commit()
+
+    def get_session_sync_cursor(self, cursor_key: str) -> str | None:
+        row = self._conn.execute(
+            "SELECT last_synced FROM session_sync_cursors WHERE cursor_key = ?", (cursor_key,)
+        ).fetchone()
+        return row[0] if row else None
+
+    def set_session_sync_cursor(self, cursor_key: str, last_synced: str) -> None:
+        self._conn.execute(
+            "INSERT OR REPLACE INTO session_sync_cursors (cursor_key, last_synced) VALUES (?, ?)",
+            (cursor_key, last_synced),
+        )
+        self._conn.commit()
+
+    def set_session_chunk_source(self, chunk_id: str, cursor_key: str, session_id: str) -> None:
+        self._conn.execute(
+            "INSERT OR REPLACE INTO session_chunk_sources (chunk_id, cursor_key, session_id) VALUES (?, ?, ?)",
+            (chunk_id, cursor_key, session_id),
+        )
+        self._conn.commit()
+
+    def get_chunks_for_session(self, cursor_key: str, session_id: str) -> list[str]:
+        rows = self._conn.execute(
+            "SELECT chunk_id FROM session_chunk_sources WHERE cursor_key = ? AND session_id = ?",
+            (cursor_key, session_id),
+        ).fetchall()
+        return [r[0] for r in rows]
+
+    def delete_session_chunk_sources(self, chunk_ids: list[str]) -> None:
+        if not chunk_ids:
+            return
+        placeholders = ",".join("?" for _ in chunk_ids)
+        self._conn.execute(
+            f"DELETE FROM session_chunk_sources WHERE chunk_id IN ({placeholders})",
+            chunk_ids,
+        )
+        self._conn.commit()
 
     def log_query_metric(self, query: str, collections: list[str], vector_ms: float,
                          bm25_ms: float, rerank_ms: float, total_ms: float,
