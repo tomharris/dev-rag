@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 
 from devrag.types import SearchResult
 
@@ -47,15 +48,23 @@ class HybridSearch:
         dense = self.embedder.embed_query(query)
         sparse = self.sparse_encoder.encode_query(query)
 
-        all_results: list[SearchResult] = []
-        for coll in collections:
-            hits = self.vector_store.hybrid_query(
+        def _query_one(coll: str):
+            return self.vector_store.hybrid_query(
                 collection=coll,
                 dense_embedding=dense,
                 sparse_embedding=sparse,
                 n_results=top_k,
                 where=where,
             )
+
+        if len(collections) == 1:
+            per_collection = [_query_one(collections[0])]
+        else:
+            with ThreadPoolExecutor(max_workers=min(len(collections), 8)) as pool:
+                per_collection = list(pool.map(_query_one, collections))
+
+        all_results: list[SearchResult] = []
+        for hits in per_collection:
             for i, doc_id in enumerate(hits.ids):
                 all_results.append(SearchResult(
                     chunk_id=doc_id,

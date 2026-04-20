@@ -65,6 +65,25 @@ def test_hybrid_search_multiple_collections_merged_by_score():
     assert [r.chunk_id for r in results] == ["pr_1", "code_1"]
 
 
+def test_hybrid_search_parallel_three_collections():
+    mock_store = MagicMock()
+    seen: list[str] = []
+
+    def mock_hybrid_query(collection, dense_embedding, sparse_embedding, n_results, where=None):
+        seen.append(collection)
+        return QueryResult(ids=[f"{collection}_1"], documents=[f"doc-{collection}"],
+            metadatas=[{"file_path": f"{collection}.py"}], distances=[0.5])
+    mock_store.hybrid_query = MagicMock(side_effect=mock_hybrid_query)
+    mock_embedder = MagicMock()
+    mock_embedder.embed_query.return_value = [0.1] * 768
+
+    search = HybridSearch(mock_store, mock_embedder, _mock_sparse_encoder())
+    results = search.search("x", top_k=10, collections=["code_chunks", "pr_diffs", "documents"])
+
+    assert {r.chunk_id for r in results} == {"code_chunks_1", "pr_diffs_1", "documents_1"}
+    assert set(seen) == {"code_chunks", "pr_diffs", "documents"}
+
+
 def test_hybrid_search_defaults_to_code_chunks():
     mock_store = MagicMock()
     mock_store.hybrid_query.return_value = QueryResult(

@@ -223,6 +223,7 @@ class SliteIndexer:
                 documents=texts,
                 metadatas=[c.metadata for c in chunks],
                 sparse_embeddings=sparse_embeddings,
+                wait=False,
             )
             for chunk in chunks:
                 self.metadata_db.set_slite_chunk_source(chunk.id, cursor_key, note_id)

@@ -227,6 +227,7 @@ class SessionsIndexer:
                 documents=texts,
                 metadatas=[c.metadata for c in chunks],
                 sparse_embeddings=sparse_embeddings,
+                wait=False,
             )
             for chunk in chunks:
                 self.metadata_db.set_session_chunk_source(chunk.id, CURSOR_KEY, session_id)

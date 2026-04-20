@@ -1,12 +1,20 @@
 from __future__ import annotations
 import uuid
+from pathlib import Path
+from typing import TYPE_CHECKING
+
 from qdrant_client import QdrantClient
 from qdrant_client.models import (
-    Distance, FieldCondition, Filter, FusionQuery, Fusion, MatchValue,
-    Modifier, PayloadSchemaType, PointIdsList, PointStruct, Prefetch,
-    SparseVector, SparseVectorParams, VectorParams,
+    BinaryQuantization, BinaryQuantizationConfig, Distance, FieldCondition,
+    Filter, FusionQuery, Fusion, MatchValue, Modifier, PayloadSchemaType,
+    PointIdsList, PointStruct, Prefetch, ScalarQuantization,
+    ScalarQuantizationConfig, ScalarType, SparseVector, SparseVectorParams,
+    VectorParams,
 )
 from devrag.types import QueryResult
+
+if TYPE_CHECKING:
+    from devrag.config import DevragConfig
 
 
 DENSE_VECTOR = "dense"
@@ -29,31 +37,62 @@ def _to_uuid(string_id: str) -> str:
     return str(uuid.uuid5(uuid.NAMESPACE_URL, string_id))
 
 
+def _build_quantization_config(kind: str, always_ram: bool):
+    if kind == "scalar":
+        return ScalarQuantization(
+            scalar=ScalarQuantizationConfig(type=ScalarType.INT8, always_ram=always_ram),
+        )
+    if kind == "binary":
+        return BinaryQuantization(binary=BinaryQuantizationConfig(always_ram=always_ram))
+    return None
+
+
 class QdrantStore:
     def __init__(
         self,
         url: str | None = None,
         path: str | None = None,
         embedding_dim: int = 768,
+        quantization: str = "",
+        quantization_always_ram: bool = True,
     ) -> None:
         if path:
             self._client = QdrantClient(path=path)
         else:
             self._client = QdrantClient(url=url or "http://localhost:6333")
         self._embedding_dim = embedding_dim
+        self._quantization_config = _build_quantization_config(quantization, quantization_always_ram)
+
+    @classmethod
+    def from_config(cls, config: "DevragConfig") -> "QdrantStore":
+        vs = config.vector_store
+        if vs.qdrant_path:
+            path = Path(vs.qdrant_path).expanduser()
+            path.mkdir(parents=True, exist_ok=True)
+            return cls(
+                path=str(path), embedding_dim=vs.embedding_dim,
+                quantization=vs.quantization, quantization_always_ram=vs.quantization_always_ram,
+            )
+        return cls(
+            url=vs.qdrant_url, embedding_dim=vs.embedding_dim,
+            quantization=vs.quantization, quantization_always_ram=vs.quantization_always_ram,
+        )
 
     def _ensure_collection(self, collection: str) -> None:
         if self._client.collection_exists(collection):
             return
-        self._client.create_collection(
-            collection_name=collection,
-            vectors_config={
+        kwargs: dict = {
+            "collection_name": collection,
+            "vectors_config": {
                 DENSE_VECTOR: VectorParams(size=self._embedding_dim, distance=Distance.COSINE),
             },
-            sparse_vectors_config={
+            "sparse_vectors_config": {
                 SPARSE_VECTOR: SparseVectorParams(modifier=Modifier.IDF),
             },
-        )
+        }
+        if self._quantization_config is not None:
+            kwargs["quantization_config"] = self._quantization_config
+        self._client.create_collection(**kwargs)
         for field_name, schema in PAYLOAD_INDEX_FIELDS.items():
             self._client.create_payload_index(
                 collection_name=collection, field_name=field_name, field_schema=schema,
@@ -67,6 +106,7 @@ class QdrantStore:
         documents: list[str],
         metadatas: list[dict],
         sparse_embeddings: list[SparseVector] | None = None,
+        wait: bool = True,
     ) -> None:
         self._ensure_collection(collection)
         points = []
@@ -78,7 +118,7 @@ class QdrantStore:
             if sparse_embeddings is not None:
                 vector[SPARSE_VECTOR] = sparse_embeddings[i]
             points.append(PointStruct(id=_to_uuid(doc_id), vector=vector, payload=payload))
-        self._client.upsert(collection_name=collection, points=points, wait=True)
+        self._client.upsert(collection_name=collection, points=points, wait=wait)
 
     def _build_filter(self, where: dict | None) -> Filter | None:
         if not where:
