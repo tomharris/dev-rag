@@ -31,8 +31,16 @@ def _get_search_components():
 @app.command()
 def search(
     query: str = typer.Argument(..., help="Search query text"),
-    scope: str = typer.Option("all", help="Scope: all, code, prs, issues, docs"),
+    scope: str = typer.Option("all", help="Scope: all, code, prs, issues, jira, slite, docs, sessions"),
     top_k: int = typer.Option(0, help="Number of results (0 = use configured default)"),
+    repo: str = typer.Option("", help="Filter by repo name"),
+    chunk_type: str = typer.Option("", "--chunk-type", help="Filter by chunk_type (e.g. diff, description, comment, slite_page, document, session_exchange)"),
+    pr_number: int = typer.Option(0, "--pr-number", help="Filter to a specific PR number"),
+    issue_number: int = typer.Option(0, "--issue-number", help="Filter to a specific issue number"),
+    ticket_key: str = typer.Option("", "--ticket-key", help="Filter by Jira ticket key"),
+    page_id: str = typer.Option("", "--page-id", help="Filter by Slite page id"),
+    session_id: str = typer.Option("", "--session-id", help="Filter by Claude Code session UUID"),
+    file_path: str = typer.Option("", "--file-path", help="Exact file path match"),
 ):
     """Search code, PRs, issues, and docs."""
     from devrag.retrieve.hybrid_search import deduplicate_results
@@ -42,7 +50,24 @@ def search(
     top_k = top_k if top_k > 0 else config.retrieval.final_k
     router = QueryRouter()
     collections = router.route(query, scope=scope)
-    candidates = hybrid.search(query, top_k=config.retrieval.top_k, collections=collections)
+    where: dict = {}
+    if repo:
+        where["repo"] = repo
+    if chunk_type:
+        where["chunk_type"] = chunk_type
+    if pr_number:
+        where["pr_number"] = pr_number
+    if issue_number:
+        where["issue_number"] = issue_number
+    if ticket_key:
+        where["ticket_key"] = ticket_key
+    if page_id:
+        where["page_id"] = page_id
+    if session_id:
+        where["session_id"] = session_id
+    if file_path:
+        where["file_path"] = file_path
+    candidates = hybrid.search(query, top_k=config.retrieval.top_k, collections=collections, where=where or None)
     if reranker and candidates:
         results = reranker.rerank(query, candidates, top_k=top_k)
     else:
@@ -249,6 +274,33 @@ def index_slite(
     typer.echo(format_slite_sync_stats(stats))
 
 
+@index_app.command("sessions")
+def index_sessions(
+    since: str | None = typer.Option(None, help="Lookback period (e.g. 30d). If set, overrides the stored cursor; otherwise incremental from cursor (or backfill_days on first run)."),
+    logs_dir: str | None = typer.Option(None, "--logs-dir", help="Override sessions.logs_dir from config"),
+):
+    """Index local Claude Code JSONL session logs."""
+    from devrag.config import load_config
+    from devrag.ingest.embedder import OllamaEmbedder
+    from devrag.ingest.session_indexer import SessionsIndexer
+    from devrag.stores.factory import create_vector_store
+    from devrag.stores.metadata_db import MetadataDB
+    from devrag.utils.formatters import format_session_sync_stats
+    config = load_config(project_dir=Path.cwd())
+    store = create_vector_store(config)
+    db_dir = Path("~/.local/share/devrag").expanduser()
+    db_dir.mkdir(parents=True, exist_ok=True)
+    meta = MetadataDB(str(db_dir / "metadata.db"))
+    embedder = OllamaEmbedder(model=config.embedding.model, ollama_url=config.embedding.ollama_url, batch_size=config.embedding.batch_size, max_tokens=config.embedding.max_tokens)
+    days = int(since.rstrip("d")) if since else None
+    dir_path = Path((logs_dir or config.sessions.logs_dir)).expanduser()
+    indexer = SessionsIndexer(store, meta, embedder, dir_path,
+                              chunk_max_tokens=config.sessions.chunk_max_tokens,
+                              backfill_days=config.sessions.backfill_days)
+    stats = indexer.sync(since_days=days)
+    typer.echo(format_session_sync_stats(stats))
+
+
 @app.command()
 def status():
     """Show indexing status."""
@@ -280,6 +332,7 @@ def status():
         f"Jira discussion chunks: {store.count('jira_discussions')}",
         f"Slite page chunks: {store.count('slite_pages')}",
         f"Document chunks: {store.count('documents')}",
+        f"Session log chunks: {store.count('session_logs')}",
     ]
     stats = meta.get_query_stats()
     if stats["total_queries"] > 0:

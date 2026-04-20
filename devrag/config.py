@@ -92,6 +92,13 @@ class DocumentsConfig:
 
 
 @dataclass
+class SessionsConfig:
+    logs_dir: str = "~/.claude/projects"
+    backfill_days: int = 60
+    chunk_max_tokens: int = 512
+
+
+@dataclass
 class DevragConfig:
     embedding: EmbeddingConfig = field(default_factory=EmbeddingConfig)
     vector_store: VectorStoreConfig = field(default_factory=VectorStoreConfig)
@@ -102,6 +109,7 @@ class DevragConfig:
     jira: JiraConfig = field(default_factory=JiraConfig)
     slite: SliteConfig = field(default_factory=SliteConfig)
     documents: DocumentsConfig = field(default_factory=DocumentsConfig)
+    sessions: SessionsConfig = field(default_factory=SessionsConfig)
 
 
 def _merge_dict_into_dataclass(dc: object, overrides: dict) -> None:

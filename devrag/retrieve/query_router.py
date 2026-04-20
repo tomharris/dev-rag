@@ -1,13 +1,14 @@
 from __future__ import annotations
 import re
 
-ALL_COLLECTIONS = ["code_chunks", "pr_diffs", "pr_discussions", "issue_descriptions", "issue_discussions", "jira_descriptions", "jira_discussions", "slite_pages", "documents"]
+ALL_COLLECTIONS = ["code_chunks", "pr_diffs", "pr_discussions", "issue_descriptions", "issue_discussions", "jira_descriptions", "jira_discussions", "slite_pages", "documents", "session_logs"]
 CODE_COLLECTIONS = ["code_chunks"]
 PR_COLLECTIONS = ["pr_diffs", "pr_discussions"]
 ISSUE_COLLECTIONS = ["issue_descriptions", "issue_discussions"]
 JIRA_COLLECTIONS = ["jira_descriptions", "jira_discussions"]
 SLITE_COLLECTIONS = ["slite_pages"]
 DOC_COLLECTIONS = ["documents"]
+SESSION_COLLECTIONS = ["session_logs"]
 
 _PR_PATTERNS = [
     r"\bwhy\s+did\s+we\b", r"\bwhy\s+was\b", r"\bwhy\s+were\b",
@@ -29,6 +30,15 @@ _JIRA_PATTERNS = [
 
 _SLITE_PATTERNS = [
     r"\bslite\b", r"\bwiki\b", r"\bknowledge\s+base\b", r"\binternal\s+doc\b",
+]
+
+_SESSION_PATTERNS = [
+    r"\blast\s+(?:time|session|week|conversation)\b",
+    r"\bearlier\s+(?:session|conversation|we|I)\b",
+    r"\bwe\s+discussed\b", r"\bwe\s+talked\s+about\b",
+    r"\bprevious(?:ly)?\s+(?:session|chat|conversation)\b",
+    r"\bi\s+asked\s+claude\b", r"\bclaude\s+(?:told|said|suggested)\b",
+    r"\bchat\s+history\b", r"\bsession\s+log\b",
 ]
 
 _DOC_PATTERNS = [
@@ -64,7 +74,12 @@ class QueryRouter:
             return SLITE_COLLECTIONS
         if scope == "docs":
             return DOC_COLLECTIONS
+        if scope == "sessions":
+            return SESSION_COLLECTIONS
         q = query.lower()
+        for pattern in _SESSION_PATTERNS:
+            if re.search(pattern, q):
+                return SESSION_COLLECTIONS
         for pattern in _SLITE_PATTERNS:
             if re.search(pattern, q):
                 return SLITE_COLLECTIONS + DOC_COLLECTIONS

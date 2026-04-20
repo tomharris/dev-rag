@@ -27,6 +27,8 @@ def _source_key(metadata: dict) -> str:
         return f"jira:{metadata['ticket_key']}"
     if "page_id" in metadata:
         return f"slite:{metadata['page_id']}"
+    if "session_id" in metadata:
+        return f"session:{metadata['session_id']}"
     if "file_path" in metadata:
         return f"file:{metadata.get('repo', '')}:{metadata['file_path']}"
     return f"unknown:{id(metadata)}"

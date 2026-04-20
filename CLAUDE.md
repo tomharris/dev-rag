@@ -28,7 +28,7 @@ Integration tests are skipped by default (`SKIP_INTEGRATION != "0"`). They requi
 
 ## Architecture
 
-DevRAG is a local RAG system that ingests code, GitHub PRs, GitHub issues, Jira Cloud tickets, Slite pages, and documents, surfaced via CLI (Typer) and MCP server (FastMCP) for Claude Code integration.
+DevRAG is a local RAG system that ingests code, GitHub PRs, GitHub issues, Jira Cloud tickets, Slite pages, documents, and Claude Code session logs, surfaced via CLI (Typer) and MCP server (FastMCP) for Claude Code integration.
 
 ### Three-Layer Pipeline
 
@@ -38,13 +38,14 @@ DevRAG is a local RAG system that ingests code, GitHub PRs, GitHub issues, Jira 
 - `issue_indexer.py` - GitHub issue sync with cursor-based incremental fetching. Chunks issue descriptions and comments separately into `issue_descriptions` and `issue_discussions` collections. Skips pull requests (GitHub Issues API returns PRs too). Supports `include_labels` / `exclude_labels` filtering.
 - `jira_indexer.py` - Jira Cloud ticket sync with cursor-based incremental fetching via JQL. Chunks ticket descriptions and comments into `jira_descriptions` and `jira_discussions` collections. Uses `JiraClient` (`devrag/utils/jira_client.py`) for REST API v3 with basic auth. Converts Atlassian Document Format (ADF) to plain text for embedding.
 - `slite_indexer.py` - Slite page sync via REST API with cursor-based incremental fetching. Fetches page content as markdown and chunks with section-aware splitting (reuses `split_markdown()` from `doc_indexer.py`). Stores in `slite_pages` collection. Uses `SliteClient` (`devrag/utils/slite_client.py`) for Bearer token auth. Supports channel filtering via `channel_ids` config.
+- `session_indexer.py` - Claude Code JSONL session log indexing. Walks `sessions.logs_dir` (default `~/.claude/projects`) for `*.jsonl` files modified since a per-`cursor_key` mtime cursor. Pairs each real user prompt with subsequent assistant text/tool_use turns into a single "session_exchange" chunk. Drops thinking blocks; summarizes tool_use as `[tool:NAME(k=v,...)]`; skips tool_result-only user turns. Chunk IDs are deterministic (`sha256(session:{id}:{turn_idx})[:16]`), so re-indexing the same file is idempotent. Stores in `session_logs` collection.
 - `doc_indexer.py` - Section-aware markdown/text splitting with token-based overlap.
 - `embedder.py` - Ollama embedding wrapper (default: `nomic-embed-text`). Truncates oversized text to `max_tokens` (default 8192) before embedding. Skips empty texts and returns zero vectors for their positions.
 
 **Storage** (`devrag/stores/`) - Pluggable vector store with metadata tracking:
 - `base.py` defines a `VectorStore` Protocol. `chroma_store.py` (default) and `qdrant_store.py` implement it. `factory.py` selects backend from config.
-- `metadata_db.py` - SQLite with WAL for file hashes, chunk-source mappings, PR/issue/Jira/Slite sync cursors, FTS5 index (BM25), and query metrics.
-- Nine collections: `code_chunks`, `pr_diffs`, `pr_discussions`, `issue_descriptions`, `issue_discussions`, `jira_descriptions`, `jira_discussions`, `slite_pages`, `documents`.
+- `metadata_db.py` - SQLite with WAL for file hashes, chunk-source mappings, PR/issue/Jira/Slite/session sync cursors, FTS5 index (BM25), and query metrics.
+- Ten collections: `code_chunks`, `pr_diffs`, `pr_discussions`, `issue_descriptions`, `issue_discussions`, `jira_descriptions`, `jira_discussions`, `slite_pages`, `documents`, `session_logs`. The authoritative list lives in `ALL_COLLECTIONS` in `devrag/retrieve/query_router.py`.
 
 **Retrieval** (`devrag/retrieve/`) - Query processing and result ranking:
 - `query_router.py` - Regex-based intent classification routes queries to relevant collections.
@@ -53,13 +54,13 @@ DevRAG is a local RAG system that ingests code, GitHub PRs, GitHub issues, Jira 
 
 ### Entry Points
 
-- **CLI**: `devrag/cli.py` - Typer app with subcommands: `search`, `index` (repo/docs/prs/issues/jira/slite), `status`, `config`, `serve`, `reindex`, `eval`. `reindex --all` clears all vector collections, metadata, and sync cursors, then re-indexes all registered code repos (non-incremental). External sources (PRs, issues, Jira, Slite) must be re-synced manually after. `reindex --name <repo>` re-indexes a single repo without affecting other repos or external sources.
-- **MCP Server**: `devrag/mcp_server.py` - FastMCP server with lazy-initialized global singletons for stores/embedders. Tools: `search()`, `index_repo()`, `index_docs()`, `sync_prs()`, `sync_issues()`, `sync_jira()`, `sync_slite()`, `status()`.
+- **CLI**: `devrag/cli.py` - Typer app with subcommands: `search`, `index` (repo/docs/prs/issues/jira/slite/sessions), `status`, `config`, `serve`, `reindex`, `eval`. `search` accepts optional metadata filters (`--repo`, `--chunk-type`, `--pr-number`, `--issue-number`, `--ticket-key`, `--page-id`, `--session-id`, `--file-path`), AND-combined against vector-store metadata. `reindex --all` clears all vector collections, metadata, and sync cursors, then re-indexes all registered code repos (non-incremental). External sources (PRs, issues, Jira, Slite) must be re-synced manually after. `reindex --name <repo>` re-indexes a single repo without affecting other repos or external sources.
+- **MCP Server**: `devrag/mcp_server.py` - FastMCP server with lazy-initialized global singletons for stores/embedders. Tools: `search()`, `index_repo()`, `index_docs()`, `sync_prs()`, `sync_issues()`, `sync_jira()`, `sync_slite()`, `sync_sessions()`, `status()`. `search()` exposes the same metadata filter args as the CLI.
 - **Types**: `devrag/types.py` - Core dataclasses (`Chunk`, `SearchResult`, `IndexStats`).
 
 ### Configuration
 
-Nested dataclass hierarchy in `devrag/config.py`. Loaded from `~/.config/devrag/devrag.yaml` (user) merged with `.devrag.yaml` (project). Key sections: `EmbeddingConfig` (including `max_tokens` for context limit), `VectorStoreConfig`, `RetrievalConfig`, `CodeConfig`, `PrsConfig`, `IssuesConfig`, `JiraConfig`, `SliteConfig`, `DocumentsConfig`.
+Nested dataclass hierarchy in `devrag/config.py`. Loaded from `~/.config/devrag/devrag.yaml` (user) merged with `.devrag.yaml` (project). Key sections: `EmbeddingConfig` (including `max_tokens` for context limit), `VectorStoreConfig`, `RetrievalConfig`, `CodeConfig`, `PrsConfig`, `IssuesConfig`, `JiraConfig`, `SliteConfig`, `DocumentsConfig`, `SessionsConfig`.
 
 ### Evaluation
 
@@ -68,7 +69,8 @@ Nested dataclass hierarchy in `devrag/config.py`. Loaded from `~/.config/devrag/
 ## Key Patterns
 
 - **Multi-repo indexing**: Multiple repos can be indexed into a unified search space. Each repo is tracked independently — indexing repo-b won't delete repo-a's data. Repos are identified by directory name (or `--name` override). `code_repos` table serves as a registry. `devrag index remove-repo <name>` removes a specific repo.
-- **Incremental indexing**: File content hashes in SQLite skip unchanged files. PR, issue, Jira, and Slite sync use stored cursors.
+- **Incremental indexing**: File content hashes in SQLite skip unchanged files. PR, issue, Jira, Slite, and session sync use stored cursors (sessions key on file mtime).
+- **Search metadata filters**: The `search()` MCP tool and `devrag search` CLI accept optional equality filters that are AND-combined and passed to `VectorStore.query(where=...)`. ChromaStore wraps multi-key dicts into `{"$and": [...]}` automatically; QdrantStore translates each key into a `FieldCondition`. The BM25/FTS5 leg doesn't filter — matching vector hits still dominate via RRF.
 - **VectorStore Protocol**: Adding a new backend means implementing `upsert()`, `query()`, `delete()` and registering in `factory.py`.
 - **Text truncation safety**: PR chunks are truncated at creation time (`chunk_max_tokens`), and the embedder has a safety-net truncation at the model context limit (`embedding.max_tokens`). Empty/whitespace texts produce zero vectors.
 - **Git-aware file discovery**: `devrag/utils/git.py` respects `.gitignore` and `.devragignore`.

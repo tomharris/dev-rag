@@ -12,13 +12,14 @@ from devrag.ingest.embedder import OllamaEmbedder
 from devrag.ingest.issue_indexer import IssueIndexer
 from devrag.ingest.jira_indexer import JiraIndexer
 from devrag.ingest.pr_indexer import PRIndexer
+from devrag.ingest.session_indexer import SessionsIndexer
 from devrag.ingest.slite_indexer import SliteIndexer
 from devrag.retrieve.hybrid_search import HybridSearch, deduplicate_results
 from devrag.retrieve.query_router import QueryRouter
 from devrag.retrieve.reranker import Reranker
 from devrag.stores.factory import create_vector_store
 from devrag.stores.metadata_db import MetadataDB
-from devrag.utils.formatters import format_doc_index_stats, format_index_stats, format_issue_sync_stats, format_jira_sync_stats, format_pr_sync_stats, format_search_results, format_slite_sync_stats
+from devrag.utils.formatters import format_doc_index_stats, format_index_stats, format_issue_sync_stats, format_jira_sync_stats, format_pr_sync_stats, format_search_results, format_session_sync_stats, format_slite_sync_stats
 from devrag.utils.github import GitHubClient
 from devrag.utils.jira_client import JiraClient
 from devrag.utils.slite_client import SliteClient
@@ -77,22 +78,67 @@ def _get_reranker() -> Reranker:
 
 
 @mcp.tool
-def search(query: str, scope: str = "all", top_k: int = 0, repo: str = "") -> str:
+def search(
+    query: str,
+    scope: str = "all",
+    top_k: int = 0,
+    repo: str = "",
+    chunk_type: str = "",
+    pr_number: int = 0,
+    issue_number: int = 0,
+    ticket_key: str = "",
+    page_id: str = "",
+    session_id: str = "",
+    file_path: str = "",
+) -> str:
     """Search code, PRs, issues, and docs using hybrid retrieval.
 
     Args:
         query: The search query.
         scope: What to search. "all" auto-routes by intent,
                "code" searches code only, "prs" searches PRs only,
-               "issues" searches issues only.
+               "issues" searches issues only, "jira", "slite", "docs",
+               "sessions" for Claude Code session logs.
         top_k: Number of results to return (0 = use configured default).
         repo: Optional repo name to filter results (empty = all repos).
+        chunk_type: Optional filter by chunk type. Known values:
+            "description" (PR/issue/jira), "comment" (issue/jira),
+            "diff" (PR), "review_comment" (PR), "slite_page",
+            "document", "session_exchange". Code chunks have no
+            chunk_type — filtering by it will exclude them.
+        pr_number: Optional filter to a specific PR number.
+        issue_number: Optional filter to a specific issue number.
+        ticket_key: Optional Jira ticket key (e.g. "PROJ-123").
+        page_id: Optional Slite page id.
+        session_id: Optional Claude Code session UUID.
+        file_path: Optional exact file path match.
+
+    All filter params are AND-combined against vector-store metadata.
+    Note: the BM25/FTS5 leg of hybrid search does not apply these
+    filters; matching vectors still dominate ranking via RRF.
     """
     config = _get_config()
     top_k = top_k if top_k > 0 else config.retrieval.final_k
     router = QueryRouter()
     collections = router.route(query, scope=scope)
-    where = {"repo": repo} if repo else None
+    where: dict = {}
+    if repo:
+        where["repo"] = repo
+    if chunk_type:
+        where["chunk_type"] = chunk_type
+    if pr_number:
+        where["pr_number"] = pr_number
+    if issue_number:
+        where["issue_number"] = issue_number
+    if ticket_key:
+        where["ticket_key"] = ticket_key
+    if page_id:
+        where["page_id"] = page_id
+    if session_id:
+        where["session_id"] = session_id
+    if file_path:
+        where["file_path"] = file_path
+    where = where or None
     hybrid = HybridSearch(
         vector_store=_get_vector_store(),
         metadata_db=_get_metadata_db(),
@@ -274,6 +320,33 @@ def sync_slite(since_days: int = 90) -> str:
 
 
 @mcp.tool
+def sync_sessions(since_days: int = 0) -> str:
+    """Sync local Claude Code JSONL session logs.
+
+    Indexes past conversations with Claude Code as a searchable knowledge
+    source. Walks `sessions.logs_dir` (default `~/.claude/projects`) for
+    `*.jsonl` files modified since the stored cursor (or `backfill_days`
+    on first run) and chunks each user→assistant exchange.
+
+    Args:
+        since_days: If > 0, overrides the stored cursor (use for backfill).
+            0 means incremental from cursor (or backfill_days on first run).
+    """
+    config = _get_config()
+    logs_dir = Path(config.sessions.logs_dir).expanduser()
+    indexer = SessionsIndexer(
+        vector_store=_get_vector_store(),
+        metadata_db=_get_metadata_db(),
+        embedder=_get_embedder(),
+        logs_dir=logs_dir,
+        chunk_max_tokens=config.sessions.chunk_max_tokens,
+        backfill_days=config.sessions.backfill_days,
+    )
+    stats = indexer.sync(since_days=since_days if since_days > 0 else None)
+    return format_session_sync_stats(stats)
+
+
+@mcp.tool
 def status() -> str:
     """Show indexing status: files, code chunks, PRs, issues, and documents."""
     store = _get_vector_store()
@@ -287,6 +360,7 @@ def status() -> str:
     jira_disc_count = store.count("jira_discussions")
     slite_count = store.count("slite_pages")
     doc_count = store.count("documents")
+    session_count = store.count("session_logs")
     indexed_files = meta.get_all_indexed_files()
     repos = meta.get_all_repos()
     lines = [
@@ -307,6 +381,7 @@ def status() -> str:
         f"Jira discussion chunks: {jira_disc_count}",
         f"Slite page chunks: {slite_count}",
         f"Document chunks: {doc_count}",
+        f"Session log chunks: {session_count}",
     ]
     stats = meta.get_query_stats()
     if stats["total_queries"] > 0:
