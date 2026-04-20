@@ -83,32 +83,23 @@ def test_remove_file_clears_chunks(tmp_dir):
     assert db.get_chunks_for_file("src/foo.py") == []
 
 
-def test_fts_index_and_search(tmp_dir):
-    db = MetadataDB(str(tmp_dir / "meta.db"))
-    db.upsert_fts("chunk_1", "def authenticate_user(username, password)")
-    db.upsert_fts("chunk_2", "class DatabaseConnection with pooling support")
-    db.upsert_fts("chunk_3", "function to parse JSON configuration files")
-    results = db.search_fts("authenticate", limit=5)
-    assert len(results) >= 1
-    assert results[0][0] == "chunk_1"
-    assert results[0][1] < 0
+def test_fts_tables_dropped_on_migration(tmp_dir):
+    """A legacy DB with chunks_fts / chunk_collections tables should be cleaned up."""
+    db_path = str(tmp_dir / "meta.db")
+    conn = sqlite3.connect(db_path)
+    conn.executescript("""
+        CREATE VIRTUAL TABLE chunks_fts USING fts5(chunk_id UNINDEXED, content);
+        CREATE TABLE chunk_collections (chunk_id TEXT PRIMARY KEY, collection TEXT NOT NULL);
+    """)
+    conn.commit()
+    conn.close()
 
-
-def test_fts_update_existing(tmp_dir):
-    db = MetadataDB(str(tmp_dir / "meta.db"))
-    db.upsert_fts("chunk_1", "original text about authentication")
-    db.upsert_fts("chunk_1", "updated text about database pooling")
-    results = db.search_fts("database pooling", limit=5)
-    assert len(results) >= 1
-    assert results[0][0] == "chunk_1"
-
-
-def test_fts_delete(tmp_dir):
-    db = MetadataDB(str(tmp_dir / "meta.db"))
-    db.upsert_fts("chunk_1", "some text")
-    db.delete_fts(["chunk_1"])
-    results = db.search_fts("some text", limit=5)
-    assert len(results) == 0
+    MetadataDB(db_path)  # migration runs on open
+    conn = sqlite3.connect(db_path)
+    tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table' OR type='virtual table'")}
+    assert "chunks_fts" not in tables
+    assert "chunk_collections" not in tables
+    conn.close()
 
 
 def test_file_hash_with_repo_scoping(tmp_dir):
@@ -156,14 +147,13 @@ def test_remove_repo(tmp_dir):
     db.register_repo("backend", "/home/user/backend")
     db.set_file_hash("main.py", "h1", repo="backend")
     db.set_chunk_source("c1", "main.py", 1, 10, repo="backend")
-    db.upsert_fts("c1", "def main(): pass")
     db.set_file_hash("app.py", "h2", repo="frontend")
     db.set_chunk_source("c2", "app.py", 1, 10, repo="frontend")
     db.remove_repo("backend")
     assert db.get_all_repos() == []
     assert db.get_indexed_files_for_repo("backend") == []
     assert db.get_indexed_files_for_repo("frontend") == ["app.py"]
-    assert db.search_fts("main", limit=5) == []
+    assert db.get_chunks_for_file("main.py", repo="backend") == []
 
 
 def test_pr_sync_cursor_set_and_get(tmp_dir):
@@ -192,25 +182,8 @@ def test_pr_chunk_source_mapping(tmp_dir):
 def test_delete_chunks_for_pr(tmp_dir):
     db = MetadataDB(str(tmp_dir / "meta.db"))
     db.set_pr_chunk_source("c1", "acme/backend", 100)
-    db.upsert_fts("c1", "some pr text")
     db.delete_chunks_for_pr("acme/backend", 100)
     assert db.get_chunks_for_pr("acme/backend", 100) == []
-    assert db.search_fts("some pr text", limit=5) == []
-
-
-def test_delete_fts_for_file(tmp_dir):
-    db = MetadataDB(str(tmp_dir / "meta.db"))
-    db.set_chunk_source("c1", "foo.py", 1, 10)
-    db.set_chunk_source("c2", "foo.py", 11, 20)
-    db.set_chunk_source("c3", "bar.py", 1, 10)
-    db.upsert_fts("c1", "text one")
-    db.upsert_fts("c2", "text two")
-    db.upsert_fts("c3", "text three")
-    db.delete_fts_for_file("foo.py")
-    assert db.search_fts("text one", limit=5) == []
-    results = db.search_fts("text three", limit=5)
-    assert len(results) == 1
-    assert results[0][0] == "c3"
 
 
 def test_reset_all(tmp_dir):
@@ -219,8 +192,6 @@ def test_reset_all(tmp_dir):
     db.register_repo("myrepo", "/path/to/repo")
     db.set_file_hash("foo.py", "abc123", repo="myrepo")
     db.set_chunk_source("c1", "foo.py", 1, 10, repo="myrepo")
-    db.upsert_fts("c1", "some code")
-    db.set_chunk_collection("c1", "code_chunks")
     db.set_pr_sync_cursor("acme/backend", "2025-01-01")
     db.set_pr_chunk_source("pr_c1", "acme/backend", 42)
     db.set_issue_sync_cursor("acme/backend", "2025-01-01")
@@ -232,7 +203,6 @@ def test_reset_all(tmp_dir):
     assert db.get_all_repos() == []
     assert db.get_file_hash("foo.py", repo="myrepo") is None
     assert db.get_chunks_for_file("foo.py", repo="myrepo") == []
-    assert db.search_fts("some code", limit=5) == []
     assert db.get_pr_sync_cursor("acme/backend") is None
     assert db.get_chunks_for_pr("acme/backend", 42) == []
     assert db.get_issue_sync_cursor("acme/backend") is None

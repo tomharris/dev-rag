@@ -74,7 +74,7 @@ def test_chunk_ids_are_deterministic():
     assert [c.id for c in chunks1] == [c.id for c in chunks2]
 
 
-def test_pr_indexer_sync(tmp_dir):
+def test_pr_indexer_sync(tmp_dir, sparse_encoder):
     from devrag.stores.qdrant_store import QdrantStore
     from devrag.stores.metadata_db import MetadataDB
     store = QdrantStore(path=str(tmp_dir / "qdrant"), embedding_dim=768)
@@ -85,7 +85,7 @@ def test_pr_indexer_sync(tmp_dir):
     mock_github.list_prs.return_value = [_make_pr(number=42, title="Fix bug")]
     mock_github.get_pr_files.return_value = [_make_file()]
     mock_github.get_pr_comments.return_value = [_make_comment()]
-    indexer = PRIndexer(store, meta, embedder, mock_github)
+    indexer = PRIndexer(store, meta, embedder, sparse_encoder, mock_github)
     stats = indexer.sync("acme/backend", since_days=90)
     assert stats.prs_fetched == 1
     assert stats.prs_indexed == 1
@@ -96,7 +96,7 @@ def test_pr_indexer_sync(tmp_dir):
     assert cursor is not None
 
 
-def test_pr_indexer_uses_cursor_when_since_days_none(tmp_dir):
+def test_pr_indexer_uses_cursor_when_since_days_none(tmp_dir, sparse_encoder):
     from devrag.stores.qdrant_store import QdrantStore
     from devrag.stores.metadata_db import MetadataDB
     store = QdrantStore(path=str(tmp_dir / "qdrant"), embedding_dim=768)
@@ -106,7 +106,7 @@ def test_pr_indexer_uses_cursor_when_since_days_none(tmp_dir):
     embedder.embed = MagicMock(side_effect=lambda texts: [[0.1] * 768 for _ in texts])
     mock_github = MagicMock()
     mock_github.list_prs.return_value = []
-    indexer = PRIndexer(store, meta, embedder, mock_github)
+    indexer = PRIndexer(store, meta, embedder, sparse_encoder, mock_github)
 
     indexer.sync("acme/backend", since_days=None)
 
@@ -115,7 +115,7 @@ def test_pr_indexer_uses_cursor_when_since_days_none(tmp_dir):
     assert call_kwargs.get("since") == "2026-03-15T10:00:00Z"
 
 
-def test_pr_indexer_since_days_overrides_cursor(tmp_dir):
+def test_pr_indexer_since_days_overrides_cursor(tmp_dir, sparse_encoder):
     from devrag.stores.qdrant_store import QdrantStore
     from devrag.stores.metadata_db import MetadataDB
     store = QdrantStore(path=str(tmp_dir / "qdrant"), embedding_dim=768)
@@ -126,7 +126,7 @@ def test_pr_indexer_since_days_overrides_cursor(tmp_dir):
     embedder.embed = MagicMock(side_effect=lambda texts: [[0.1] * 768 for _ in texts])
     mock_github = MagicMock()
     mock_github.list_prs.return_value = []
-    indexer = PRIndexer(store, meta, embedder, mock_github)
+    indexer = PRIndexer(store, meta, embedder, sparse_encoder, mock_github)
 
     indexer.sync("acme/backend", since_days=180)
 

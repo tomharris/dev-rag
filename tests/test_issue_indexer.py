@@ -72,7 +72,7 @@ def test_chunk_issue_truncation():
     assert desc_chunks[0].text.endswith("# ... (truncated)")
 
 
-def test_issue_indexer_sync(tmp_dir):
+def test_issue_indexer_sync(tmp_dir, sparse_encoder):
     from devrag.stores.qdrant_store import QdrantStore
     from devrag.stores.metadata_db import MetadataDB
     store = QdrantStore(path=str(tmp_dir / "qdrant"), embedding_dim=768)
@@ -86,7 +86,7 @@ def test_issue_indexer_sync(tmp_dir):
         _make_issue(number=99, title="Some PR", pull_request={"url": "https://..."}),
     ]
     mock_github.get_issue_comments.return_value = [_make_issue_comment()]
-    indexer = IssueIndexer(store, meta, embedder, mock_github)
+    indexer = IssueIndexer(store, meta, embedder, sparse_encoder, mock_github)
     stats = indexer.sync("acme/backend", since_days=90)
     assert stats.issues_fetched == 2
     assert stats.issues_indexed == 1
@@ -98,7 +98,7 @@ def test_issue_indexer_sync(tmp_dir):
     assert cursor is not None
 
 
-def test_issue_indexer_incremental_sync(tmp_dir):
+def test_issue_indexer_incremental_sync(tmp_dir, sparse_encoder):
     from devrag.stores.qdrant_store import QdrantStore
     from devrag.stores.metadata_db import MetadataDB
     store = QdrantStore(path=str(tmp_dir / "qdrant"), embedding_dim=768)
@@ -108,7 +108,7 @@ def test_issue_indexer_incremental_sync(tmp_dir):
     mock_github = MagicMock()
     mock_github.list_issues.return_value = [_make_issue(number=10, updated_at="2026-03-02T12:00:00Z")]
     mock_github.get_issue_comments.return_value = []
-    indexer = IssueIndexer(store, meta, embedder, mock_github)
+    indexer = IssueIndexer(store, meta, embedder, sparse_encoder, mock_github)
 
     # First sync
     indexer.sync("acme/backend", since_days=90)
@@ -123,7 +123,7 @@ def test_issue_indexer_incremental_sync(tmp_dir):
     assert call_kwargs.kwargs.get("since") == first_cursor or call_kwargs[1].get("since") == first_cursor
 
 
-def test_issue_indexer_include_labels(tmp_dir):
+def test_issue_indexer_include_labels(tmp_dir, sparse_encoder):
     from devrag.stores.qdrant_store import QdrantStore
     from devrag.stores.metadata_db import MetadataDB
     store = QdrantStore(path=str(tmp_dir / "qdrant"), embedding_dim=768)
@@ -137,13 +137,13 @@ def test_issue_indexer_include_labels(tmp_dir):
         _make_issue(number=3, title="Both", labels=["bug", "enhancement"]),
     ]
     mock_github.get_issue_comments.return_value = []
-    indexer = IssueIndexer(store, meta, embedder, mock_github, include_labels=["bug"])
+    indexer = IssueIndexer(store, meta, embedder, sparse_encoder, mock_github, include_labels=["bug"])
     stats = indexer.sync("acme/backend", since_days=90)
     assert stats.issues_indexed == 2  # #1 (bug) and #3 (bug + enhancement)
     assert stats.issues_skipped == 1  # #2 (enhancement only)
 
 
-def test_issue_indexer_exclude_labels(tmp_dir):
+def test_issue_indexer_exclude_labels(tmp_dir, sparse_encoder):
     from devrag.stores.qdrant_store import QdrantStore
     from devrag.stores.metadata_db import MetadataDB
     store = QdrantStore(path=str(tmp_dir / "qdrant"), embedding_dim=768)
@@ -157,13 +157,13 @@ def test_issue_indexer_exclude_labels(tmp_dir):
         _make_issue(number=3, title="Both", labels=["bug", "wontfix"]),
     ]
     mock_github.get_issue_comments.return_value = []
-    indexer = IssueIndexer(store, meta, embedder, mock_github, exclude_labels=["wontfix"])
+    indexer = IssueIndexer(store, meta, embedder, sparse_encoder, mock_github, exclude_labels=["wontfix"])
     stats = indexer.sync("acme/backend", since_days=90)
     assert stats.issues_indexed == 1  # #1 only
     assert stats.issues_skipped == 2  # #2 and #3
 
 
-def test_issue_indexer_include_and_exclude_labels(tmp_dir):
+def test_issue_indexer_include_and_exclude_labels(tmp_dir, sparse_encoder):
     from devrag.stores.qdrant_store import QdrantStore
     from devrag.stores.metadata_db import MetadataDB
     store = QdrantStore(path=str(tmp_dir / "qdrant"), embedding_dim=768)
@@ -177,7 +177,7 @@ def test_issue_indexer_include_and_exclude_labels(tmp_dir):
         _make_issue(number=3, title="Feature", labels=["enhancement"]),
     ]
     mock_github.get_issue_comments.return_value = []
-    indexer = IssueIndexer(store, meta, embedder, mock_github,
+    indexer = IssueIndexer(store, meta, embedder, sparse_encoder, mock_github,
                            include_labels=["bug"], exclude_labels=["wontfix"])
     stats = indexer.sync("acme/backend", since_days=90)
     assert stats.issues_indexed == 1  # #1 only (has bug, no wontfix)

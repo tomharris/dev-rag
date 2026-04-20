@@ -6,7 +6,7 @@ A local RAG system for developer teams that ingests **code**, **GitHub PRs**, **
 
 Most code search tools treat source files as plain text. DevRAG uses **tree-sitter AST parsing** to chunk code along semantic boundaries (functions, classes, methods), so searches return meaningful units instead of fragments split mid-function.
 
-It combines **vector search** (semantic) with **BM25** (keyword) via Reciprocal Rank Fusion, which is critical for code where exact identifiers like `refreshToken` matter as much as the concept of "token refresh."
+It combines **vector search** (semantic) with **BM25** (keyword) via Qdrant's server-side Reciprocal Rank Fusion, which is critical for code where exact identifiers like `refreshToken` matter as much as the concept of "token refresh." Both signals live in Qdrant as named vectors on the same points (`dense` + `bm25`), so search is a single round trip per collection and metadata filters apply equally to both legs.
 
 PR history, issues, Jira tickets, and Slite wiki pages are first-class data sources — encoding *why* code changed, what bugs and features are tracked, what project management context exists, and what internal knowledge base content says.
 
@@ -191,7 +191,7 @@ The `rag-first` skill fires automatically when Claude detects a codebase questio
              ▼                                  ▼
 ┌─────────────────────────────────────────────────────────────────────┐
 │                     RETRIEVAL LAYER                                 │
-│  Query Router ──→ Hybrid Search (Vector + BM25 / RRF) ──→ Reranker│
+│  Query Router ──→ Hybrid Search (server-side dense+BM25 RRF) ──→ Reranker│
 │  (intent → collections)                          (cross-encoder)   │
 └────────────┬────────────────────────────────────────────────────────┘
              │
@@ -200,7 +200,8 @@ The `rag-first` skill fires automatically when Claude detects a codebase questio
 │                     STORAGE LAYER                                   │
 │  VectorStore Protocol                                              │
 │    └─ Qdrant (HTTP or embedded local path)                         │
-│  SQLite: file hashes, chunk mappings, PR cursors, FTS5, metrics    │
+│       points carry named vectors: {dense, bm25 sparse}             │
+│  SQLite: file hashes, chunk mappings, sync cursors, metrics         │
 └────────────┬────────────────────────────────────────────────────────┘
              │
              ▼

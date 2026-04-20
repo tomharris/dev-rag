@@ -10,20 +10,32 @@ app.add_typer(index_app, name="index")
 app.add_typer(config_app, name="config")
 
 
+def _make_embedder(config):
+    from devrag.ingest.embedder import OllamaEmbedder
+    return OllamaEmbedder(
+        model=config.embedding.model, ollama_url=config.embedding.ollama_url,
+        batch_size=config.embedding.batch_size, max_tokens=config.embedding.max_tokens,
+    )
+
+
+def _make_sparse_encoder(config):
+    from devrag.ingest.sparse_encoder import BM25SparseEncoder
+    return BM25SparseEncoder(
+        model_name=config.sparse_embedding.model,
+        batch_size=config.sparse_embedding.batch_size,
+    )
+
+
 def _get_search_components():
     from devrag.config import load_config
-    from devrag.ingest.embedder import OllamaEmbedder
     from devrag.retrieve.hybrid_search import HybridSearch
     from devrag.retrieve.reranker import Reranker
     from devrag.stores.factory import create_vector_store
-    from devrag.stores.metadata_db import MetadataDB
     config = load_config(project_dir=Path.cwd())
     store = create_vector_store(config)
-    db_dir = Path("~/.local/share/devrag").expanduser()
-    db_dir.mkdir(parents=True, exist_ok=True)
-    meta = MetadataDB(str(db_dir / "metadata.db"))
-    embedder = OllamaEmbedder(model=config.embedding.model, ollama_url=config.embedding.ollama_url, batch_size=config.embedding.batch_size, max_tokens=config.embedding.max_tokens)
-    hybrid = HybridSearch(store, meta, embedder, rrf_k=config.retrieval.rrf_k)
+    embedder = _make_embedder(config)
+    sparse_encoder = _make_sparse_encoder(config)
+    hybrid = HybridSearch(store, embedder, sparse_encoder)
     reranker = Reranker(model_name=config.retrieval.reranker_model) if config.retrieval.rerank else None
     return hybrid, reranker, config
 
@@ -85,7 +97,6 @@ def index_repo(
     """Index a local code repository."""
     from devrag.config import load_config
     from devrag.ingest.code_indexer import CodeIndexer
-    from devrag.ingest.embedder import OllamaEmbedder
     from devrag.stores.factory import create_vector_store
     from devrag.stores.metadata_db import MetadataDB
     from devrag.utils.formatters import format_index_stats
@@ -94,8 +105,9 @@ def index_repo(
     db_dir = Path("~/.local/share/devrag").expanduser()
     db_dir.mkdir(parents=True, exist_ok=True)
     meta = MetadataDB(str(db_dir / "metadata.db"))
-    embedder = OllamaEmbedder(model=config.embedding.model, ollama_url=config.embedding.ollama_url, batch_size=config.embedding.batch_size, max_tokens=config.embedding.max_tokens)
-    indexer = CodeIndexer(store, meta, embedder, config.code)
+    embedder = _make_embedder(config)
+    sparse_encoder = _make_sparse_encoder(config)
+    indexer = CodeIndexer(store, meta, embedder, sparse_encoder, config.code)
     stats = indexer.index_repo(Path(path).resolve(), incremental=not full, repo_name=name)
     typer.echo(format_index_stats(stats))
 
@@ -130,7 +142,6 @@ def index_docs_cmd(
     """Index a directory of documents."""
     from devrag.config import load_config
     from devrag.ingest.doc_indexer import DocIndexer
-    from devrag.ingest.embedder import OllamaEmbedder
     from devrag.stores.factory import create_vector_store
     from devrag.stores.metadata_db import MetadataDB
     from devrag.utils.formatters import format_doc_index_stats
@@ -139,9 +150,10 @@ def index_docs_cmd(
     db_dir = Path("~/.local/share/devrag").expanduser()
     db_dir.mkdir(parents=True, exist_ok=True)
     meta = MetadataDB(str(db_dir / "metadata.db"))
-    embedder = OllamaEmbedder(model=config.embedding.model, ollama_url=config.embedding.ollama_url, batch_size=config.embedding.batch_size, max_tokens=config.embedding.max_tokens)
+    embedder = _make_embedder(config)
+    sparse_encoder = _make_sparse_encoder(config)
     glob_patterns = [g.strip() for g in glob.split(",")]
-    indexer = DocIndexer(store, meta, embedder, config)
+    indexer = DocIndexer(store, meta, embedder, sparse_encoder, config)
     stats = indexer.index_docs(Path(path).resolve(), glob_patterns=glob_patterns)
     typer.echo(format_doc_index_stats(stats))
 
@@ -153,7 +165,6 @@ def index_prs(
 ):
     """Sync GitHub PRs for a repository."""
     from devrag.config import load_config
-    from devrag.ingest.embedder import OllamaEmbedder
     from devrag.ingest.pr_indexer import PRIndexer
     from devrag.stores.factory import create_vector_store
     from devrag.stores.metadata_db import MetadataDB
@@ -168,10 +179,11 @@ def index_prs(
     db_dir = Path("~/.local/share/devrag").expanduser()
     db_dir.mkdir(parents=True, exist_ok=True)
     meta = MetadataDB(str(db_dir / "metadata.db"))
-    embedder = OllamaEmbedder(model=config.embedding.model, ollama_url=config.embedding.ollama_url, batch_size=config.embedding.batch_size, max_tokens=config.embedding.max_tokens)
+    embedder = _make_embedder(config)
+    sparse_encoder = _make_sparse_encoder(config)
     days = int(since.rstrip("d")) if since else None
     github = GitHubClient(token=token)
-    indexer = PRIndexer(store, meta, embedder, github, chunk_max_tokens=config.prs.chunk_max_tokens)
+    indexer = PRIndexer(store, meta, embedder, sparse_encoder, github, chunk_max_tokens=config.prs.chunk_max_tokens)
     stats = indexer.sync(repo, since_days=days)
     typer.echo(format_pr_sync_stats(stats))
 
@@ -183,7 +195,6 @@ def index_issues(
 ):
     """Sync GitHub issues for a repository."""
     from devrag.config import load_config
-    from devrag.ingest.embedder import OllamaEmbedder
     from devrag.ingest.issue_indexer import IssueIndexer
     from devrag.stores.factory import create_vector_store
     from devrag.stores.metadata_db import MetadataDB
@@ -198,10 +209,11 @@ def index_issues(
     db_dir = Path("~/.local/share/devrag").expanduser()
     db_dir.mkdir(parents=True, exist_ok=True)
     meta = MetadataDB(str(db_dir / "metadata.db"))
-    embedder = OllamaEmbedder(model=config.embedding.model, ollama_url=config.embedding.ollama_url, batch_size=config.embedding.batch_size, max_tokens=config.embedding.max_tokens)
+    embedder = _make_embedder(config)
+    sparse_encoder = _make_sparse_encoder(config)
     days = int(since.rstrip("d"))
     github = GitHubClient(token=token)
-    indexer = IssueIndexer(store, meta, embedder, github, chunk_max_tokens=config.issues.chunk_max_tokens,
+    indexer = IssueIndexer(store, meta, embedder, sparse_encoder, github, chunk_max_tokens=config.issues.chunk_max_tokens,
                            include_labels=config.issues.include_labels, exclude_labels=config.issues.exclude_labels)
     stats = indexer.sync(repo, since_days=days)
     typer.echo(format_issue_sync_stats(stats))
@@ -213,7 +225,6 @@ def index_jira(
 ):
     """Sync Jira Cloud tickets based on configured JQL filter."""
     from devrag.config import load_config
-    from devrag.ingest.embedder import OllamaEmbedder
     from devrag.ingest.jira_indexer import JiraIndexer
     from devrag.stores.factory import create_vector_store
     from devrag.stores.metadata_db import MetadataDB
@@ -235,10 +246,11 @@ def index_jira(
     db_dir = Path("~/.local/share/devrag").expanduser()
     db_dir.mkdir(parents=True, exist_ok=True)
     meta = MetadataDB(str(db_dir / "metadata.db"))
-    embedder = OllamaEmbedder(model=config.embedding.model, ollama_url=config.embedding.ollama_url, batch_size=config.embedding.batch_size, max_tokens=config.embedding.max_tokens)
+    embedder = _make_embedder(config)
+    sparse_encoder = _make_sparse_encoder(config)
     days = int(since.rstrip("d"))
     jira = JiraClient(instance_url=config.jira.instance_url, email=email, api_token=token)
-    indexer = JiraIndexer(store, meta, embedder, jira, chunk_max_tokens=config.jira.chunk_max_tokens)
+    indexer = JiraIndexer(store, meta, embedder, sparse_encoder, jira, chunk_max_tokens=config.jira.chunk_max_tokens)
     stats = indexer.sync(config.jira.instance_url, config.jira.jql, since_days=days)
     typer.echo(format_jira_sync_stats(stats))
 
@@ -249,7 +261,6 @@ def index_slite(
 ):
     """Sync Slite pages for the configured workspace."""
     from devrag.config import load_config
-    from devrag.ingest.embedder import OllamaEmbedder
     from devrag.ingest.slite_indexer import SliteIndexer
     from devrag.stores.factory import create_vector_store
     from devrag.stores.metadata_db import MetadataDB
@@ -264,10 +275,11 @@ def index_slite(
     db_dir = Path("~/.local/share/devrag").expanduser()
     db_dir.mkdir(parents=True, exist_ok=True)
     meta = MetadataDB(str(db_dir / "metadata.db"))
-    embedder = OllamaEmbedder(model=config.embedding.model, ollama_url=config.embedding.ollama_url, batch_size=config.embedding.batch_size, max_tokens=config.embedding.max_tokens)
+    embedder = _make_embedder(config)
+    sparse_encoder = _make_sparse_encoder(config)
     days = int(since.rstrip("d"))
     slite = SliteClient(api_token=token)
-    indexer = SliteIndexer(store, meta, embedder, slite, chunk_max_tokens=config.slite.chunk_max_tokens,
+    indexer = SliteIndexer(store, meta, embedder, sparse_encoder, slite, chunk_max_tokens=config.slite.chunk_max_tokens,
                            chunk_overlap_tokens=config.slite.chunk_overlap_tokens,
                            channel_ids=config.slite.channel_ids)
     stats = indexer.sync(since_days=days)
@@ -281,7 +293,6 @@ def index_sessions(
 ):
     """Index local Claude Code JSONL session logs."""
     from devrag.config import load_config
-    from devrag.ingest.embedder import OllamaEmbedder
     from devrag.ingest.session_indexer import SessionsIndexer
     from devrag.stores.factory import create_vector_store
     from devrag.stores.metadata_db import MetadataDB
@@ -291,10 +302,11 @@ def index_sessions(
     db_dir = Path("~/.local/share/devrag").expanduser()
     db_dir.mkdir(parents=True, exist_ok=True)
     meta = MetadataDB(str(db_dir / "metadata.db"))
-    embedder = OllamaEmbedder(model=config.embedding.model, ollama_url=config.embedding.ollama_url, batch_size=config.embedding.batch_size, max_tokens=config.embedding.max_tokens)
+    embedder = _make_embedder(config)
+    sparse_encoder = _make_sparse_encoder(config)
     days = int(since.rstrip("d")) if since else None
     dir_path = Path((logs_dir or config.sessions.logs_dir)).expanduser()
-    indexer = SessionsIndexer(store, meta, embedder, dir_path,
+    indexer = SessionsIndexer(store, meta, embedder, sparse_encoder, dir_path,
                               chunk_max_tokens=config.sessions.chunk_max_tokens,
                               backfill_days=config.sessions.backfill_days)
     stats = indexer.sync(since_days=days)
@@ -404,7 +416,6 @@ def reindex(
     """Reset and re-index everything, or re-index a single repo by name."""
     from devrag.config import load_config
     from devrag.ingest.code_indexer import CodeIndexer
-    from devrag.ingest.embedder import OllamaEmbedder
     from devrag.stores.factory import create_vector_store
     from devrag.stores.metadata_db import MetadataDB
     from devrag.utils.formatters import format_index_stats
@@ -443,9 +454,9 @@ def reindex(
         typer.echo(f"Cleared {len(chunk_ids)} chunks for '{name}'.")
 
         # Re-index
-        embedder = OllamaEmbedder(model=config.embedding.model, ollama_url=config.embedding.ollama_url,
-                                  batch_size=config.embedding.batch_size, max_tokens=config.embedding.max_tokens)
-        indexer = CodeIndexer(store, meta, embedder, config.code)
+        embedder = _make_embedder(config)
+        sparse_encoder = _make_sparse_encoder(config)
+        indexer = CodeIndexer(store, meta, embedder, sparse_encoder, config.code)
         typer.echo(f"Re-indexing {repo_name} ({repo_path})...")
         stats = indexer.index_repo(repo_dir, incremental=False, repo_name=repo_name)
         typer.echo(format_index_stats(stats))
@@ -465,9 +476,9 @@ def reindex(
 
     # Auto-reindex known code repos
     if repos:
-        embedder = OllamaEmbedder(model=config.embedding.model, ollama_url=config.embedding.ollama_url,
-                                  batch_size=config.embedding.batch_size, max_tokens=config.embedding.max_tokens)
-        indexer = CodeIndexer(store, meta, embedder, config.code)
+        embedder = _make_embedder(config)
+        sparse_encoder = _make_sparse_encoder(config)
+        indexer = CodeIndexer(store, meta, embedder, sparse_encoder, config.code)
         total_chunks = 0
         for repo_name, repo_path in repos:
             repo_dir = Path(repo_path)

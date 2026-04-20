@@ -132,7 +132,7 @@ def test_make_chunk_id_varies():
 
 # --- Indexer sync tests ---
 
-def test_slite_indexer_sync(tmp_dir):
+def test_slite_indexer_sync(tmp_dir, sparse_encoder):
     from devrag.stores.qdrant_store import QdrantStore
     from devrag.stores.metadata_db import MetadataDB
     store = QdrantStore(path=str(tmp_dir / "qdrant"), embedding_dim=768)
@@ -151,7 +151,7 @@ def test_slite_indexer_sync(tmp_dir):
         "content": "# Onboarding\n\nWelcome aboard.\n\n## Day 1\n\nSet up your laptop.",
     }
 
-    indexer = SliteIndexer(store, meta, embedder, mock_slite)
+    indexer = SliteIndexer(store, meta, embedder, sparse_encoder, mock_slite)
     stats = indexer.sync(since_days=90)
     assert stats.pages_fetched == 1
     assert stats.pages_indexed == 1
@@ -160,7 +160,7 @@ def test_slite_indexer_sync(tmp_dir):
     assert meta.get_slite_sync_cursor("default") == "2026-04-01T12:00:00Z"
 
 
-def test_slite_indexer_skips_empty_pages(tmp_dir):
+def test_slite_indexer_skips_empty_pages(tmp_dir, sparse_encoder):
     from devrag.stores.qdrant_store import QdrantStore
     from devrag.stores.metadata_db import MetadataDB
     store = QdrantStore(path=str(tmp_dir / "qdrant"), embedding_dim=768)
@@ -174,14 +174,14 @@ def test_slite_indexer_skips_empty_pages(tmp_dir):
     ])
     mock_slite.get_note.return_value = {"id": "page-empty", "title": "Empty", "content": ""}
 
-    indexer = SliteIndexer(store, meta, embedder, mock_slite)
+    indexer = SliteIndexer(store, meta, embedder, sparse_encoder, mock_slite)
     stats = indexer.sync(since_days=90)
     assert stats.pages_fetched == 1
     assert stats.pages_skipped == 1
     assert stats.pages_indexed == 0
 
 
-def test_slite_indexer_incremental_sync(tmp_dir):
+def test_slite_indexer_incremental_sync(tmp_dir, sparse_encoder):
     from devrag.stores.qdrant_store import QdrantStore
     from devrag.stores.metadata_db import MetadataDB
     store = QdrantStore(path=str(tmp_dir / "qdrant"), embedding_dim=768)
@@ -197,7 +197,7 @@ def test_slite_indexer_incremental_sync(tmp_dir):
         "id": "page-1", "title": "Guide", "content": "# Guide\n\nSome content.",
     }
 
-    indexer = SliteIndexer(store, meta, embedder, mock_slite)
+    indexer = SliteIndexer(store, meta, embedder, sparse_encoder, mock_slite)
 
     # First sync — indexes the page, sets cursor
     stats1 = indexer.sync(since_days=90)
@@ -227,7 +227,7 @@ def test_slite_indexer_incremental_sync(tmp_dir):
     assert meta.get_slite_sync_cursor("default") == "2026-04-10T12:00:00Z"
 
 
-def test_slite_indexer_channel_filtering(tmp_dir):
+def test_slite_indexer_channel_filtering(tmp_dir, sparse_encoder):
     from devrag.stores.qdrant_store import QdrantStore
     from devrag.stores.metadata_db import MetadataDB
     store = QdrantStore(path=str(tmp_dir / "qdrant"), embedding_dim=768)
@@ -238,7 +238,7 @@ def test_slite_indexer_channel_filtering(tmp_dir):
     mock_slite = MagicMock(spec=SliteClient)
     mock_slite.list_notes.return_value = iter([])
 
-    indexer = SliteIndexer(store, meta, embedder, mock_slite,
+    indexer = SliteIndexer(store, meta, embedder, sparse_encoder, mock_slite,
                            channel_ids=["ch-1", "ch-2"])
     indexer.sync(since_days=90)
     call_args = mock_slite.list_notes.call_args
