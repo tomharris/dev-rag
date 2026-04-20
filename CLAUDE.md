@@ -44,14 +44,15 @@ DevRAG is a local RAG system that ingests code, GitHub PRs, GitHub issues, Jira 
 - `sparse_encoder.py` - FastEmbed BM25 wrapper (default: `Qdrant/bm25`). Produces `SparseVector(indices, values)` that Qdrant stores alongside the dense vector on each point.
 
 **Storage** (`devrag/stores/`) - Qdrant vector store with metadata tracking:
-- `base.py` defines a `VectorStore` Protocol. `qdrant_store.py` implements it. `factory.py` constructs it from config — HTTP (`qdrant_url`) or embedded (`qdrant_path`, local filesystem).
+- `qdrant_store.py` — the only vector-store backend. Constructed from config via `QdrantStore.from_config(config)` (HTTP if `qdrant_url`, embedded if `qdrant_path`).
 - Each collection holds named vectors: `dense` (Ollama embedding, cosine) and `bm25` (FastEmbed sparse, IDF modifier). `QdrantStore._ensure_collection` also creates payload indexes on hot filter fields (`repo`, `file_path`, `pr_number`, `issue_number`, `ticket_key`, `page_id`, `session_id`, `chunk_type`) so filtered queries don't linear-scan.
+- Optional dense-vector quantization via `vector_store.quantization: scalar|binary` (default off). Scalar (int8) saves ~4× dense memory at small recall cost; binary is more aggressive. Quantization is applied at collection-creation time only — changing the config requires `devrag reindex --all` to take effect.
 - `metadata_db.py` - SQLite with WAL for file hashes, chunk-source mappings, PR/issue/Jira/Slite/session sync cursors, and query metrics. (BM25 previously lived here in FTS5; it now lives in Qdrant as sparse vectors.)
 - Ten collections: `code_chunks`, `pr_diffs`, `pr_discussions`, `issue_descriptions`, `issue_discussions`, `jira_descriptions`, `jira_discussions`, `slite_pages`, `documents`, `session_logs`. The authoritative list lives in `ALL_COLLECTIONS` in `devrag/retrieve/query_router.py`.
 
 **Retrieval** (`devrag/retrieve/`) - Query processing and result ranking:
 - `query_router.py` - Regex-based intent classification routes queries to relevant collections.
-- `hybrid_search.py` - Dense + BM25 fused server-side by Qdrant. Each routed collection is hit with a single `query_points` call that prefetches both legs (`using="dense"` and `using="bm25"`) and fuses with `FusionQuery(fusion=Fusion.RRF)`. Results across collections are re-sorted by score.
+- `hybrid_search.py` - Dense + BM25 fused server-side by Qdrant. Each routed collection is hit with a single `query_points` call that prefetches both legs (`using="dense"` and `using="bm25"`) and fuses with `FusionQuery(fusion=Fusion.RRF)`. When multiple collections are routed, the per-collection queries run concurrently via a `ThreadPoolExecutor`. Results across collections are re-sorted by score.
 - `reranker.py` - Cross-encoder reranking of top-K candidates.
 
 ### Entry Points
@@ -73,7 +74,6 @@ Nested dataclass hierarchy in `devrag/config.py`. Loaded from `~/.config/devrag/
 - **Multi-repo indexing**: Multiple repos can be indexed into a unified search space. Each repo is tracked independently — indexing repo-b won't delete repo-a's data. Repos are identified by directory name (or `--name` override). `code_repos` table serves as a registry. `devrag index remove-repo <name>` removes a specific repo.
 - **Incremental indexing**: File content hashes in SQLite skip unchanged files. PR, issue, Jira, Slite, and session sync use stored cursors (sessions key on file mtime).
 - **Search metadata filters**: The `search()` MCP tool and `devrag search` CLI accept optional equality filters that are AND-combined and passed to `VectorStore.hybrid_query(where=...)`. QdrantStore translates each key into a `FieldCondition` inside a `Filter(must=[...])` applied to both dense and sparse prefetches, so filter correctness does not depend on which leg of RRF surfaced a chunk. Payload indexes on the common filter fields make these filters O(log n) instead of full-collection scans.
-- **VectorStore Protocol**: `base.py` defines the minimal interface (`upsert()`, `query()`, `get_by_ids()`, `delete()`, `delete_collection()`, `count()`). Only one implementation ships (`QdrantStore`); the protocol is kept because it makes tests mockable and keeps a clean seam if another backend is ever added.
 - **Text truncation safety**: PR chunks are truncated at creation time (`chunk_max_tokens`), and the embedder has a safety-net truncation at the model context limit (`embedding.max_tokens`). Empty/whitespace texts produce zero vectors.
 - **Git-aware file discovery**: `devrag/utils/git.py` respects `.gitignore` and `.devragignore`.
 - GitHub tokens come from env vars (configured via `prs.github_token_env` / `issues.github_token_env`), never stored in config files. Jira credentials similarly use `jira.jira_email_env` / `jira.jira_token_env`. Slite uses `slite.slite_token_env` (default: `SLITE_TOKEN`).

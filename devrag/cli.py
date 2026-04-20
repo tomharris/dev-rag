@@ -30,9 +30,9 @@ def _get_search_components():
     from devrag.config import load_config
     from devrag.retrieve.hybrid_search import HybridSearch
     from devrag.retrieve.reranker import Reranker
-    from devrag.stores.factory import create_vector_store
+    from devrag.stores.qdrant_store import QdrantStore
     config = load_config(project_dir=Path.cwd())
-    store = create_vector_store(config)
+    store = QdrantStore.from_config(config)
     embedder = _make_embedder(config)
     sparse_encoder = _make_sparse_encoder(config)
     hybrid = HybridSearch(store, embedder, sparse_encoder)
@@ -97,11 +97,11 @@ def index_repo(
     """Index a local code repository."""
     from devrag.config import load_config
     from devrag.ingest.code_indexer import CodeIndexer
-    from devrag.stores.factory import create_vector_store
+    from devrag.stores.qdrant_store import QdrantStore
     from devrag.stores.metadata_db import MetadataDB
     from devrag.utils.formatters import format_index_stats
     config = load_config(project_dir=Path.cwd())
-    store = create_vector_store(config)
+    store = QdrantStore.from_config(config)
     db_dir = Path("~/.local/share/devrag").expanduser()
     db_dir.mkdir(parents=True, exist_ok=True)
     meta = MetadataDB(str(db_dir / "metadata.db"))
@@ -118,10 +118,10 @@ def remove_repo(
 ):
     """Remove all indexed data for a repository."""
     from devrag.config import load_config
-    from devrag.stores.factory import create_vector_store
+    from devrag.stores.qdrant_store import QdrantStore
     from devrag.stores.metadata_db import MetadataDB
     config = load_config(project_dir=Path.cwd())
-    store = create_vector_store(config)
+    store = QdrantStore.from_config(config)
     db_dir = Path("~/.local/share/devrag").expanduser()
     meta = MetadataDB(str(db_dir / "metadata.db"))
     chunk_ids = meta._conn.execute(
@@ -142,11 +142,11 @@ def index_docs_cmd(
     """Index a directory of documents."""
     from devrag.config import load_config
     from devrag.ingest.doc_indexer import DocIndexer
-    from devrag.stores.factory import create_vector_store
+    from devrag.stores.qdrant_store import QdrantStore
     from devrag.stores.metadata_db import MetadataDB
     from devrag.utils.formatters import format_doc_index_stats
     config = load_config(project_dir=Path.cwd())
-    store = create_vector_store(config)
+    store = QdrantStore.from_config(config)
     db_dir = Path("~/.local/share/devrag").expanduser()
     db_dir.mkdir(parents=True, exist_ok=True)
     meta = MetadataDB(str(db_dir / "metadata.db"))
@@ -166,7 +166,7 @@ def index_prs(
     """Sync GitHub PRs for a repository."""
     from devrag.config import load_config
     from devrag.ingest.pr_indexer import PRIndexer
-    from devrag.stores.factory import create_vector_store
+    from devrag.stores.qdrant_store import QdrantStore
     from devrag.stores.metadata_db import MetadataDB
     from devrag.utils.formatters import format_pr_sync_stats
     from devrag.utils.github import GitHubClient
@@ -175,7 +175,7 @@ def index_prs(
     if not token:
         typer.echo(f"Error: {config.prs.github_token_env} environment variable not set.", err=True)
         raise typer.Exit(1)
-    store = create_vector_store(config)
+    store = QdrantStore.from_config(config)
     db_dir = Path("~/.local/share/devrag").expanduser()
     db_dir.mkdir(parents=True, exist_ok=True)
     meta = MetadataDB(str(db_dir / "metadata.db"))
@@ -196,7 +196,7 @@ def index_issues(
     """Sync GitHub issues for a repository."""
     from devrag.config import load_config
     from devrag.ingest.issue_indexer import IssueIndexer
-    from devrag.stores.factory import create_vector_store
+    from devrag.stores.qdrant_store import QdrantStore
     from devrag.stores.metadata_db import MetadataDB
     from devrag.utils.formatters import format_issue_sync_stats
     from devrag.utils.github import GitHubClient
@@ -205,7 +205,7 @@ def index_issues(
     if not token:
         typer.echo(f"Error: {config.issues.github_token_env} environment variable not set.", err=True)
         raise typer.Exit(1)
-    store = create_vector_store(config)
+    store = QdrantStore.from_config(config)
     db_dir = Path("~/.local/share/devrag").expanduser()
     db_dir.mkdir(parents=True, exist_ok=True)
     meta = MetadataDB(str(db_dir / "metadata.db"))
@@ -226,7 +226,7 @@ def index_jira(
     """Sync Jira Cloud tickets based on configured JQL filter."""
     from devrag.config import load_config
     from devrag.ingest.jira_indexer import JiraIndexer
-    from devrag.stores.factory import create_vector_store
+    from devrag.stores.qdrant_store import QdrantStore
     from devrag.stores.metadata_db import MetadataDB
     from devrag.utils.formatters import format_jira_sync_stats
     from devrag.utils.jira_client import JiraClient
@@ -242,7 +242,7 @@ def index_jira(
     if not email or not token:
         typer.echo(f"Error: {config.jira.jira_email_env} and {config.jira.jira_token_env} environment variables must be set.", err=True)
         raise typer.Exit(1)
-    store = create_vector_store(config)
+    store = QdrantStore.from_config(config)
     db_dir = Path("~/.local/share/devrag").expanduser()
     db_dir.mkdir(parents=True, exist_ok=True)
     meta = MetadataDB(str(db_dir / "metadata.db"))
@@ -262,7 +262,7 @@ def index_slite(
     """Sync Slite pages for the configured workspace."""
     from devrag.config import load_config
     from devrag.ingest.slite_indexer import SliteIndexer
-    from devrag.stores.factory import create_vector_store
+    from devrag.stores.qdrant_store import QdrantStore
     from devrag.stores.metadata_db import MetadataDB
     from devrag.utils.formatters import format_slite_sync_stats
     from devrag.utils.slite_client import SliteClient
@@ -271,7 +271,7 @@ def index_slite(
     if not token:
         typer.echo(f"Error: {config.slite.slite_token_env} environment variable not set.", err=True)
         raise typer.Exit(1)
-    store = create_vector_store(config)
+    store = QdrantStore.from_config(config)
     db_dir = Path("~/.local/share/devrag").expanduser()
     db_dir.mkdir(parents=True, exist_ok=True)
     meta = MetadataDB(str(db_dir / "metadata.db"))
@@ -294,11 +294,11 @@ def index_sessions(
     """Index local Claude Code JSONL session logs."""
     from devrag.config import load_config
     from devrag.ingest.session_indexer import SessionsIndexer
-    from devrag.stores.factory import create_vector_store
+    from devrag.stores.qdrant_store import QdrantStore
     from devrag.stores.metadata_db import MetadataDB
     from devrag.utils.formatters import format_session_sync_stats
     config = load_config(project_dir=Path.cwd())
-    store = create_vector_store(config)
+    store = QdrantStore.from_config(config)
     db_dir = Path("~/.local/share/devrag").expanduser()
     db_dir.mkdir(parents=True, exist_ok=True)
     meta = MetadataDB(str(db_dir / "metadata.db"))
@@ -317,10 +317,10 @@ def index_sessions(
 def status():
     """Show indexing status."""
     from devrag.config import load_config
-    from devrag.stores.factory import create_vector_store
+    from devrag.stores.qdrant_store import QdrantStore
     from devrag.stores.metadata_db import MetadataDB
     config = load_config(project_dir=Path.cwd())
-    store = create_vector_store(config)
+    store = QdrantStore.from_config(config)
     db_dir = Path("~/.local/share/devrag").expanduser()
     db_dir.mkdir(parents=True, exist_ok=True)
     meta = MetadataDB(str(db_dir / "metadata.db"))
@@ -416,7 +416,7 @@ def reindex(
     """Reset and re-index everything, or re-index a single repo by name."""
     from devrag.config import load_config
     from devrag.ingest.code_indexer import CodeIndexer
-    from devrag.stores.factory import create_vector_store
+    from devrag.stores.qdrant_store import QdrantStore
     from devrag.stores.metadata_db import MetadataDB
     from devrag.utils.formatters import format_index_stats
 
@@ -425,7 +425,7 @@ def reindex(
         raise typer.Exit(1)
 
     config = load_config(project_dir=Path.cwd())
-    store = create_vector_store(config)
+    store = QdrantStore.from_config(config)
     db_dir = Path("~/.local/share/devrag").expanduser()
     db_dir.mkdir(parents=True, exist_ok=True)
     meta = MetadataDB(str(db_dir / "metadata.db"))

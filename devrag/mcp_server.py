@@ -18,7 +18,7 @@ from devrag.ingest.sparse_encoder import BM25SparseEncoder
 from devrag.retrieve.hybrid_search import HybridSearch, deduplicate_results
 from devrag.retrieve.query_router import QueryRouter
 from devrag.retrieve.reranker import Reranker
-from devrag.stores.factory import create_vector_store
+from devrag.stores.qdrant_store import QdrantStore
 from devrag.stores.metadata_db import MetadataDB
 from devrag.utils.formatters import format_doc_index_stats, format_index_stats, format_issue_sync_stats, format_jira_sync_stats, format_pr_sync_stats, format_search_results, format_session_sync_stats, format_slite_sync_stats
 from devrag.utils.github import GitHubClient
@@ -45,7 +45,7 @@ def _get_config() -> DevragConfig:
 def _get_vector_store():
     global _vector_store
     if _vector_store is None:
-        _vector_store = create_vector_store(_get_config())
+        _vector_store = QdrantStore.from_config(_get_config())
     return _vector_store
 
 

@@ -9,8 +9,8 @@ import tree_sitter_language_pack as tslp
 from tree_sitter import Node, Parser
 
 from devrag.config import CodeConfig
-from devrag.stores.base import VectorStore
 from devrag.stores.metadata_db import MetadataDB
+from devrag.stores.qdrant_store import QdrantStore
 from devrag.types import Chunk, IndexStats
 from devrag.utils.git import discover_files
 
@@ -420,7 +420,7 @@ class CodeIndexer:
 
     def __init__(
         self,
-        store: VectorStore,
+        store: QdrantStore,
         meta: MetadataDB,
         embedder: Any,
         sparse_encoder: Any,
@@ -551,6 +551,7 @@ class CodeIndexer:
             documents=texts,
             metadatas=metadatas,
             sparse_embeddings=sparse_embeddings,
+            wait=False,
         )
 
         for chunk in chunks:

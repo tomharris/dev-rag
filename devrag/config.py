@@ -26,6 +26,8 @@ class VectorStoreConfig:
     qdrant_url: str = "http://localhost:6333"
     qdrant_path: str = ""
     embedding_dim: int = 768
+    quantization: str = ""  # "", "scalar", or "binary"
+    quantization_always_ram: bool = True
 
 
 @dataclass

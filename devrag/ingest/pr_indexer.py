@@ -136,6 +136,7 @@ class PRIndexer:
                     documents=[c.text for c in diff_chunks],
                     metadatas=[c.metadata for c in diff_chunks],
                     sparse_embeddings=[sparse_map[c.id] for c in diff_chunks],
+                    wait=False,
                 )
             if discussion_chunks:
                 self.vector_store.upsert(
@@ -144,6 +145,7 @@ class PRIndexer:
                     documents=[c.text for c in discussion_chunks],
                     metadatas=[c.metadata for c in discussion_chunks],
                     sparse_embeddings=[sparse_map[c.id] for c in discussion_chunks],
+                    wait=False,
                 )
 
             for chunk in chunks:

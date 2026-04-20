@@ -198,9 +198,8 @@ The `rag-first` skill fires automatically when Claude detects a codebase questio
              ▼
 ┌─────────────────────────────────────────────────────────────────────┐
 │                     STORAGE LAYER                                   │
-│  VectorStore Protocol                                              │
-│    └─ Qdrant (HTTP or embedded local path)                         │
-│       points carry named vectors: {dense, bm25 sparse}             │
+│  QdrantStore (HTTP or embedded local path)                          │
+│    points carry named vectors: {dense, bm25 sparse}                 │
 │  SQLite: file hashes, chunk mappings, sync cursors, metrics         │
 └────────────┬────────────────────────────────────────────────────────┘
              │

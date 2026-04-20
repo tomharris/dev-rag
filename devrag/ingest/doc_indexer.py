@@ -172,7 +172,7 @@ class DocIndexer:
             self.vector_store.upsert(collection="documents", ids=[c.id for c in chunks],
                                       embeddings=embeddings, documents=texts,
                                       metadatas=[c.metadata for c in chunks],
-                                      sparse_embeddings=sparse_embeddings)
+                                      sparse_embeddings=sparse_embeddings, wait=False)
             for chunk in chunks:
                 self.metadata_db.set_chunk_source(chunk.id, rel_path, 0, 0)
             stats.files_indexed += 1
