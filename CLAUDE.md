@@ -41,15 +41,17 @@ DevRAG is a local RAG system that ingests code, GitHub PRs, GitHub issues, Jira 
 - `session_indexer.py` - Claude Code JSONL session log indexing. Walks `sessions.logs_dir` (default `~/.claude/projects`) for `*.jsonl` files modified since a per-`cursor_key` mtime cursor. Pairs each real user prompt with subsequent assistant text/tool_use turns into a single "session_exchange" chunk. Drops thinking blocks; summarizes tool_use as `[tool:NAME(k=v,...)]`; skips tool_result-only user turns. Chunk IDs are deterministic (`sha256(session:{id}:{turn_idx})[:16]`), so re-indexing the same file is idempotent. Stores in `session_logs` collection.
 - `doc_indexer.py` - Section-aware markdown/text splitting with token-based overlap.
 - `embedder.py` - Ollama embedding wrapper (default: `nomic-embed-text`). Truncates oversized text to `max_tokens` (default 8192) before embedding. Skips empty texts and returns zero vectors for their positions.
+- `sparse_encoder.py` - FastEmbed BM25 wrapper (default: `Qdrant/bm25`). Produces `SparseVector(indices, values)` that Qdrant stores alongside the dense vector on each point.
 
 **Storage** (`devrag/stores/`) - Qdrant vector store with metadata tracking:
 - `base.py` defines a `VectorStore` Protocol. `qdrant_store.py` implements it. `factory.py` constructs it from config — HTTP (`qdrant_url`) or embedded (`qdrant_path`, local filesystem).
-- `metadata_db.py` - SQLite with WAL for file hashes, chunk-source mappings, PR/issue/Jira/Slite/session sync cursors, FTS5 index (BM25), and query metrics.
+- Each collection holds named vectors: `dense` (Ollama embedding, cosine) and `bm25` (FastEmbed sparse, IDF modifier). `QdrantStore._ensure_collection` also creates payload indexes on hot filter fields (`repo`, `file_path`, `pr_number`, `issue_number`, `ticket_key`, `page_id`, `session_id`, `chunk_type`) so filtered queries don't linear-scan.
+- `metadata_db.py` - SQLite with WAL for file hashes, chunk-source mappings, PR/issue/Jira/Slite/session sync cursors, and query metrics. (BM25 previously lived here in FTS5; it now lives in Qdrant as sparse vectors.)
 - Ten collections: `code_chunks`, `pr_diffs`, `pr_discussions`, `issue_descriptions`, `issue_discussions`, `jira_descriptions`, `jira_discussions`, `slite_pages`, `documents`, `session_logs`. The authoritative list lives in `ALL_COLLECTIONS` in `devrag/retrieve/query_router.py`.
 
 **Retrieval** (`devrag/retrieve/`) - Query processing and result ranking:
 - `query_router.py` - Regex-based intent classification routes queries to relevant collections.
-- `hybrid_search.py` - Vector + BM25 search merged via Reciprocal Rank Fusion (RRF).
+- `hybrid_search.py` - Dense + BM25 fused server-side by Qdrant. Each routed collection is hit with a single `query_points` call that prefetches both legs (`using="dense"` and `using="bm25"`) and fuses with `FusionQuery(fusion=Fusion.RRF)`. Results across collections are re-sorted by score.
 - `reranker.py` - Cross-encoder reranking of top-K candidates.
 
 ### Entry Points
@@ -60,7 +62,7 @@ DevRAG is a local RAG system that ingests code, GitHub PRs, GitHub issues, Jira 
 
 ### Configuration
 
-Nested dataclass hierarchy in `devrag/config.py`. Loaded from `~/.config/devrag/devrag.yaml` (user) merged with `.devrag.yaml` (project). Key sections: `EmbeddingConfig` (including `max_tokens` for context limit), `VectorStoreConfig`, `RetrievalConfig`, `CodeConfig`, `PrsConfig`, `IssuesConfig`, `JiraConfig`, `SliteConfig`, `DocumentsConfig`, `SessionsConfig`.
+Nested dataclass hierarchy in `devrag/config.py`. Loaded from `~/.config/devrag/devrag.yaml` (user) merged with `.devrag.yaml` (project). Key sections: `EmbeddingConfig` (including `max_tokens` for context limit), `SparseEmbeddingConfig` (FastEmbed BM25 model), `VectorStoreConfig`, `RetrievalConfig`, `CodeConfig`, `PrsConfig`, `IssuesConfig`, `JiraConfig`, `SliteConfig`, `DocumentsConfig`, `SessionsConfig`.
 
 ### Evaluation
 
@@ -70,7 +72,7 @@ Nested dataclass hierarchy in `devrag/config.py`. Loaded from `~/.config/devrag/
 
 - **Multi-repo indexing**: Multiple repos can be indexed into a unified search space. Each repo is tracked independently — indexing repo-b won't delete repo-a's data. Repos are identified by directory name (or `--name` override). `code_repos` table serves as a registry. `devrag index remove-repo <name>` removes a specific repo.
 - **Incremental indexing**: File content hashes in SQLite skip unchanged files. PR, issue, Jira, Slite, and session sync use stored cursors (sessions key on file mtime).
-- **Search metadata filters**: The `search()` MCP tool and `devrag search` CLI accept optional equality filters that are AND-combined and passed to `VectorStore.query(where=...)`. QdrantStore translates each key into a `FieldCondition` inside a `Filter(must=[...])`. The BM25/FTS5 leg doesn't filter — matching vector hits still dominate via RRF.
+- **Search metadata filters**: The `search()` MCP tool and `devrag search` CLI accept optional equality filters that are AND-combined and passed to `VectorStore.hybrid_query(where=...)`. QdrantStore translates each key into a `FieldCondition` inside a `Filter(must=[...])` applied to both dense and sparse prefetches, so filter correctness does not depend on which leg of RRF surfaced a chunk. Payload indexes on the common filter fields make these filters O(log n) instead of full-collection scans.
 - **VectorStore Protocol**: `base.py` defines the minimal interface (`upsert()`, `query()`, `get_by_ids()`, `delete()`, `delete_collection()`, `count()`). Only one implementation ships (`QdrantStore`); the protocol is kept because it makes tests mockable and keeps a clean seam if another backend is ever added.
 - **Text truncation safety**: PR chunks are truncated at creation time (`chunk_max_tokens`), and the embedder has a safety-net truncation at the model context limit (`embedding.max_tokens`). Empty/whitespace texts produce zero vectors.
 - **Git-aware file discovery**: `devrag/utils/git.py` respects `.gitignore` and `.devragignore`.
@@ -79,4 +81,4 @@ Nested dataclass hierarchy in `devrag/config.py`. Loaded from `~/.config/devrag/
 
 ## Dependencies
 
-Python 3.12+. Uses `hatchling` build backend. Key deps: `qdrant-client`, `fastmcp`, `tree-sitter` + `tree-sitter-language-pack`, `sentence-transformers`, `typer`, `httpx`, `gitpython`. Dev: `pytest`, `pytest-asyncio`, `respx`.
+Python 3.12+. Uses `hatchling` build backend. Key deps: `qdrant-client`, `fastembed` (BM25 sparse encoder), `fastmcp`, `tree-sitter` + `tree-sitter-language-pack`, `sentence-transformers`, `typer`, `httpx`, `gitpython`. Dev: `pytest`, `pytest-asyncio`, `respx`.

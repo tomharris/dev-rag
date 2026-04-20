@@ -72,15 +72,15 @@ from devrag.stores.metadata_db import MetadataDB
 
 
 @pytest.fixture
-def indexer_deps(tmp_dir, vector_store):
+def indexer_deps(tmp_dir, vector_store, sparse_encoder):
     meta = MetadataDB(str(tmp_dir / "meta.db"))
     embedder = MagicMock()
     embedder.embed = MagicMock(side_effect=lambda texts: [[0.1] * 768 for _ in texts])
-    return vector_store, meta, embedder
+    return vector_store, meta, embedder, sparse_encoder
 
 
 def test_code_indexer_indexes_repo(tmp_dir, indexer_deps):
-    store, meta, embedder = indexer_deps
+    store, meta, embedder, sparse_encoder = indexer_deps
     repo = tmp_dir / "repo"
     repo.mkdir()
     import subprocess
@@ -91,7 +91,7 @@ def test_code_indexer_indexes_repo(tmp_dir, indexer_deps):
     (repo / "utils.py").write_text("def add(a, b):\n    return a + b\n")
     subprocess.run(["git", "add", "."], cwd=str(repo), capture_output=True)
     subprocess.run(["git", "commit", "-m", "init"], cwd=str(repo), capture_output=True)
-    indexer = CodeIndexer(store, meta, embedder)
+    indexer = CodeIndexer(store, meta, embedder, sparse_encoder)
     stats = indexer.index_repo(repo)
     assert stats.files_scanned >= 2
     assert stats.files_indexed >= 2
@@ -100,7 +100,7 @@ def test_code_indexer_indexes_repo(tmp_dir, indexer_deps):
 
 
 def test_code_indexer_incremental_skips_unchanged(tmp_dir, indexer_deps):
-    store, meta, embedder = indexer_deps
+    store, meta, embedder, sparse_encoder = indexer_deps
     repo = tmp_dir / "repo"
     repo.mkdir()
     import subprocess
@@ -110,7 +110,7 @@ def test_code_indexer_incremental_skips_unchanged(tmp_dir, indexer_deps):
     (repo / "main.py").write_text("def hello():\n    return 'world'\n")
     subprocess.run(["git", "add", "."], cwd=str(repo), capture_output=True)
     subprocess.run(["git", "commit", "-m", "init"], cwd=str(repo), capture_output=True)
-    indexer = CodeIndexer(store, meta, embedder)
+    indexer = CodeIndexer(store, meta, embedder, sparse_encoder)
     stats1 = indexer.index_repo(repo)
     assert stats1.files_indexed >= 1
     embedder.embed.reset_mock()
@@ -193,7 +193,7 @@ def test_whole_file_chunk_skips_whitespace_only_file(tmp_dir):
 
 def test_code_indexer_skips_empty_file(tmp_dir, indexer_deps):
     """Empty files should not cause embedding or upsert errors."""
-    store, meta, embedder = indexer_deps
+    store, meta, embedder, sparse_encoder = indexer_deps
     repo = tmp_dir / "repo"
     repo.mkdir()
     import subprocess
@@ -204,7 +204,7 @@ def test_code_indexer_skips_empty_file(tmp_dir, indexer_deps):
     (repo / "real.py").write_text("def hello():\n    return 'world'\n")
     subprocess.run(["git", "add", "."], cwd=str(repo), capture_output=True)
     subprocess.run(["git", "commit", "-m", "init"], cwd=str(repo), capture_output=True)
-    indexer = CodeIndexer(store, meta, embedder)
+    indexer = CodeIndexer(store, meta, embedder, sparse_encoder)
     stats = indexer.index_repo(repo)
     assert stats.files_indexed >= 1
     assert stats.chunks_created >= 1
@@ -212,7 +212,7 @@ def test_code_indexer_skips_empty_file(tmp_dir, indexer_deps):
 
 def test_code_indexer_multi_repo_no_cross_deletion(tmp_dir, indexer_deps):
     """Indexing repo-b should not delete repo-a's data."""
-    store, meta, embedder = indexer_deps
+    store, meta, embedder, sparse_encoder = indexer_deps
     import subprocess
 
     # Create repo-a
@@ -235,7 +235,7 @@ def test_code_indexer_multi_repo_no_cross_deletion(tmp_dir, indexer_deps):
     subprocess.run(["git", "add", "."], cwd=str(repo_b), capture_output=True)
     subprocess.run(["git", "commit", "-m", "init"], cwd=str(repo_b), capture_output=True)
 
-    indexer = CodeIndexer(store, meta, embedder)
+    indexer = CodeIndexer(store, meta, embedder, sparse_encoder)
     stats_a = indexer.index_repo(repo_a, repo_name="repo-a")
     assert stats_a.files_indexed >= 1
     count_after_a = store.count("code_chunks")
@@ -255,7 +255,7 @@ def test_code_indexer_multi_repo_no_cross_deletion(tmp_dir, indexer_deps):
 
 
 def test_code_indexer_detects_removed_files(tmp_dir, indexer_deps):
-    store, meta, embedder = indexer_deps
+    store, meta, embedder, sparse_encoder = indexer_deps
     repo = tmp_dir / "repo"
     repo.mkdir()
     import subprocess
@@ -266,7 +266,7 @@ def test_code_indexer_detects_removed_files(tmp_dir, indexer_deps):
     (repo / "old.py").write_text("def old():\n    pass\n")
     subprocess.run(["git", "add", "."], cwd=str(repo), capture_output=True)
     subprocess.run(["git", "commit", "-m", "init"], cwd=str(repo), capture_output=True)
-    indexer = CodeIndexer(store, meta, embedder)
+    indexer = CodeIndexer(store, meta, embedder, sparse_encoder)
     indexer.index_repo(repo)
     initial_count = store.count("code_chunks")
     (repo / "old.py").unlink()

@@ -71,13 +71,14 @@ def chunk_issue(issue: dict, comments: list[dict], repo: str, max_tokens: int = 
 
 
 class IssueIndexer:
-    def __init__(self, vector_store, metadata_db, embedder, github_client,
+    def __init__(self, vector_store, metadata_db, embedder, sparse_encoder, github_client,
                  chunk_max_tokens: int = 512,
                  include_labels: list[str] | None = None,
                  exclude_labels: list[str] | None = None) -> None:
         self.vector_store = vector_store
         self.metadata_db = metadata_db
         self.embedder = embedder
+        self.sparse_encoder = sparse_encoder
         self.github = github_client
         self.chunk_max_tokens = chunk_max_tokens
         self.include_labels = set(include_labels) if include_labels else set()
@@ -127,7 +128,9 @@ class IssueIndexer:
 
             texts = [c.text for c in chunks]
             embeddings = self.embedder.embed(texts)
+            sparse_embeddings = self.sparse_encoder.encode(texts)
             embed_map = {c.id: embeddings[i] for i, c in enumerate(chunks)}
+            sparse_map = {c.id: sparse_embeddings[i] for i, c in enumerate(chunks)}
 
             desc_chunks = [c for c in chunks if c.metadata["chunk_type"] == "description"]
             discussion_chunks = [c for c in chunks if c.metadata["chunk_type"] == "comment"]
@@ -138,6 +141,7 @@ class IssueIndexer:
                     embeddings=[embed_map[c.id] for c in desc_chunks],
                     documents=[c.text for c in desc_chunks],
                     metadatas=[c.metadata for c in desc_chunks],
+                    sparse_embeddings=[sparse_map[c.id] for c in desc_chunks],
                 )
             if discussion_chunks:
                 self.vector_store.upsert(
@@ -145,13 +149,11 @@ class IssueIndexer:
                     embeddings=[embed_map[c.id] for c in discussion_chunks],
                     documents=[c.text for c in discussion_chunks],
                     metadatas=[c.metadata for c in discussion_chunks],
+                    sparse_embeddings=[sparse_map[c.id] for c in discussion_chunks],
                 )
 
             for chunk in chunks:
                 self.metadata_db.set_issue_chunk_source(chunk.id, repo, issue["number"])
-                self.metadata_db.upsert_fts(chunk.id, chunk.text)
-                coll = "issue_discussions" if chunk.metadata["chunk_type"] == "comment" else "issue_descriptions"
-                self.metadata_db.set_chunk_collection(chunk.id, coll)
 
             stats.issues_indexed += 1
             stats.chunks_created += len(chunks)

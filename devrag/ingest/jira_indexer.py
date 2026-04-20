@@ -119,11 +119,12 @@ def chunk_jira_ticket(issue: dict, instance_url: str, max_tokens: int = 512) -> 
 
 
 class JiraIndexer:
-    def __init__(self, vector_store, metadata_db, embedder, jira_client: JiraClient,
+    def __init__(self, vector_store, metadata_db, embedder, sparse_encoder, jira_client: JiraClient,
                  chunk_max_tokens: int = 512) -> None:
         self.vector_store = vector_store
         self.metadata_db = metadata_db
         self.embedder = embedder
+        self.sparse_encoder = sparse_encoder
         self.jira = jira_client
         self.chunk_max_tokens = chunk_max_tokens
 
@@ -156,7 +157,9 @@ class JiraIndexer:
 
             texts = [c.text for c in chunks]
             embeddings = self.embedder.embed(texts)
+            sparse_embeddings = self.sparse_encoder.encode(texts)
             embed_map = {c.id: embeddings[i] for i, c in enumerate(chunks)}
+            sparse_map = {c.id: sparse_embeddings[i] for i, c in enumerate(chunks)}
 
             desc_chunks = [c for c in chunks if c.metadata["chunk_type"] == "description"]
             discussion_chunks = [c for c in chunks if c.metadata["chunk_type"] == "comment"]
@@ -167,6 +170,7 @@ class JiraIndexer:
                     embeddings=[embed_map[c.id] for c in desc_chunks],
                     documents=[c.text for c in desc_chunks],
                     metadatas=[c.metadata for c in desc_chunks],
+                    sparse_embeddings=[sparse_map[c.id] for c in desc_chunks],
                 )
             if discussion_chunks:
                 self.vector_store.upsert(
@@ -174,13 +178,11 @@ class JiraIndexer:
                     embeddings=[embed_map[c.id] for c in discussion_chunks],
                     documents=[c.text for c in discussion_chunks],
                     metadatas=[c.metadata for c in discussion_chunks],
+                    sparse_embeddings=[sparse_map[c.id] for c in discussion_chunks],
                 )
 
             for chunk in chunks:
                 self.metadata_db.set_jira_chunk_source(chunk.id, instance_url, key)
-                self.metadata_db.upsert_fts(chunk.id, chunk.text)
-                coll = "jira_discussions" if chunk.metadata["chunk_type"] == "comment" else "jira_descriptions"
-                self.metadata_db.set_chunk_collection(chunk.id, coll)
 
             # Track latest updated timestamp for cursor
             if updated_at and updated_at > latest_updated:

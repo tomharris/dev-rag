@@ -16,6 +16,12 @@ class EmbeddingConfig:
 
 
 @dataclass
+class SparseEmbeddingConfig:
+    model: str = "Qdrant/bm25"
+    batch_size: int = 64
+
+
+@dataclass
 class VectorStoreConfig:
     qdrant_url: str = "http://localhost:6333"
     qdrant_path: str = ""
@@ -100,6 +106,7 @@ class SessionsConfig:
 @dataclass
 class DevragConfig:
     embedding: EmbeddingConfig = field(default_factory=EmbeddingConfig)
+    sparse_embedding: SparseEmbeddingConfig = field(default_factory=SparseEmbeddingConfig)
     vector_store: VectorStoreConfig = field(default_factory=VectorStoreConfig)
     retrieval: RetrievalConfig = field(default_factory=RetrievalConfig)
     code: CodeConfig = field(default_factory=CodeConfig)

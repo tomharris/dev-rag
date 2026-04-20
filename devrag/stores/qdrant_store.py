@@ -2,10 +2,26 @@ from __future__ import annotations
 import uuid
 from qdrant_client import QdrantClient
 from qdrant_client.models import (
-    Distance, FieldCondition, Filter, MatchValue,
-    PointIdsList, PointStruct, VectorParams,
+    Distance, FieldCondition, Filter, FusionQuery, Fusion, MatchValue,
+    Modifier, PayloadSchemaType, PointIdsList, PointStruct, Prefetch,
+    SparseVector, SparseVectorParams, VectorParams,
 )
 from devrag.types import QueryResult
+
+
+DENSE_VECTOR = "dense"
+SPARSE_VECTOR = "bm25"
+
+PAYLOAD_INDEX_FIELDS: dict[str, PayloadSchemaType] = {
+    "repo": PayloadSchemaType.KEYWORD,
+    "file_path": PayloadSchemaType.KEYWORD,
+    "pr_number": PayloadSchemaType.INTEGER,
+    "issue_number": PayloadSchemaType.INTEGER,
+    "ticket_key": PayloadSchemaType.KEYWORD,
+    "page_id": PayloadSchemaType.KEYWORD,
+    "session_id": PayloadSchemaType.KEYWORD,
+    "chunk_type": PayloadSchemaType.KEYWORD,
+}
 
 
 def _to_uuid(string_id: str) -> str:
@@ -27,38 +43,52 @@ class QdrantStore:
         self._embedding_dim = embedding_dim
 
     def _ensure_collection(self, collection: str) -> None:
-        if not self._client.collection_exists(collection):
-            self._client.create_collection(
-                collection_name=collection,
-                vectors_config=VectorParams(size=self._embedding_dim, distance=Distance.COSINE),
+        if self._client.collection_exists(collection):
+            return
+        self._client.create_collection(
+            collection_name=collection,
+            vectors_config={
+                DENSE_VECTOR: VectorParams(size=self._embedding_dim, distance=Distance.COSINE),
+            },
+            sparse_vectors_config={
+                SPARSE_VECTOR: SparseVectorParams(modifier=Modifier.IDF),
+            },
+        )
+        for field_name, schema in PAYLOAD_INDEX_FIELDS.items():
+            self._client.create_payload_index(
+                collection_name=collection, field_name=field_name, field_schema=schema,
             )
 
-    def upsert(self, collection: str, ids: list[str], embeddings: list[list[float]],
-               documents: list[str], metadatas: list[dict]) -> None:
+    def upsert(
+        self,
+        collection: str,
+        ids: list[str],
+        embeddings: list[list[float]],
+        documents: list[str],
+        metadatas: list[dict],
+        sparse_embeddings: list[SparseVector] | None = None,
+    ) -> None:
         self._ensure_collection(collection)
         points = []
         for i, doc_id in enumerate(ids):
             payload = dict(metadatas[i]) if metadatas[i] else {}
             payload["_document"] = documents[i]
             payload["_original_id"] = doc_id
-            points.append(PointStruct(id=_to_uuid(doc_id), vector=embeddings[i], payload=payload))
+            vector: dict = {DENSE_VECTOR: embeddings[i]}
+            if sparse_embeddings is not None:
+                vector[SPARSE_VECTOR] = sparse_embeddings[i]
+            points.append(PointStruct(id=_to_uuid(doc_id), vector=vector, payload=payload))
         self._client.upsert(collection_name=collection, points=points, wait=True)
 
-    def query(self, collection: str, query_embedding: list[float],
-              n_results: int = 10, where: dict | None = None) -> QueryResult:
-        if not self._client.collection_exists(collection):
-            return QueryResult(ids=[], documents=[], metadatas=[], distances=[])
-        query_filter = None
-        if where:
-            conditions = [FieldCondition(key=k, match=MatchValue(value=v)) for k, v in where.items()]
-            query_filter = Filter(must=conditions)
-        response = self._client.query_points(
-            collection_name=collection, query=query_embedding,
-            limit=n_results, query_filter=query_filter, with_payload=True,
-        )
-        results = response.points
+    def _build_filter(self, where: dict | None) -> Filter | None:
+        if not where:
+            return None
+        conditions = [FieldCondition(key=k, match=MatchValue(value=v)) for k, v in where.items()]
+        return Filter(must=conditions)
+
+    def _points_to_result(self, points) -> QueryResult:
         ids, documents, metadatas, distances = [], [], [], []
-        for point in results:
+        for point in points:
             payload = dict(point.payload) if point.payload else {}
             original_id = payload.pop("_original_id", str(point.id))
             doc = payload.pop("_document", "")
@@ -67,6 +97,49 @@ class QdrantStore:
             metadatas.append(payload)
             distances.append(point.score)
         return QueryResult(ids=ids, documents=documents, metadatas=metadatas, distances=distances)
+
+    def query(
+        self,
+        collection: str,
+        query_embedding: list[float],
+        n_results: int = 10,
+        where: dict | None = None,
+    ) -> QueryResult:
+        if not self._client.collection_exists(collection):
+            return QueryResult(ids=[], documents=[], metadatas=[], distances=[])
+        response = self._client.query_points(
+            collection_name=collection,
+            query=query_embedding,
+            using=DENSE_VECTOR,
+            limit=n_results,
+            query_filter=self._build_filter(where),
+            with_payload=True,
+        )
+        return self._points_to_result(response.points)
+
+    def hybrid_query(
+        self,
+        collection: str,
+        dense_embedding: list[float],
+        sparse_embedding: SparseVector,
+        n_results: int = 10,
+        where: dict | None = None,
+    ) -> QueryResult:
+        if not self._client.collection_exists(collection):
+            return QueryResult(ids=[], documents=[], metadatas=[], distances=[])
+        query_filter = self._build_filter(where)
+        prefetch = [
+            Prefetch(query=dense_embedding, using=DENSE_VECTOR, limit=n_results, filter=query_filter),
+            Prefetch(query=sparse_embedding, using=SPARSE_VECTOR, limit=n_results, filter=query_filter),
+        ]
+        response = self._client.query_points(
+            collection_name=collection,
+            prefetch=prefetch,
+            query=FusionQuery(fusion=Fusion.RRF),
+            limit=n_results,
+            with_payload=True,
+        )
+        return self._points_to_result(response.points)
 
     def get_by_ids(self, collection: str, ids: list[str]) -> QueryResult:
         if not ids or not self._client.collection_exists(collection):

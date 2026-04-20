@@ -14,6 +14,7 @@ from devrag.ingest.jira_indexer import JiraIndexer
 from devrag.ingest.pr_indexer import PRIndexer
 from devrag.ingest.session_indexer import SessionsIndexer
 from devrag.ingest.slite_indexer import SliteIndexer
+from devrag.ingest.sparse_encoder import BM25SparseEncoder
 from devrag.retrieve.hybrid_search import HybridSearch, deduplicate_results
 from devrag.retrieve.query_router import QueryRouter
 from devrag.retrieve.reranker import Reranker
@@ -30,6 +31,7 @@ _config: DevragConfig | None = None
 _vector_store = None
 _metadata_db: MetadataDB | None = None
 _embedder: OllamaEmbedder | None = None
+_sparse_encoder: BM25SparseEncoder | None = None
 _reranker: Reranker | None = None
 
 
@@ -67,6 +69,17 @@ def _get_embedder() -> OllamaEmbedder:
             max_tokens=config.embedding.max_tokens,
         )
     return _embedder
+
+
+def _get_sparse_encoder() -> BM25SparseEncoder:
+    global _sparse_encoder
+    if _sparse_encoder is None:
+        config = _get_config()
+        _sparse_encoder = BM25SparseEncoder(
+            model_name=config.sparse_embedding.model,
+            batch_size=config.sparse_embedding.batch_size,
+        )
+    return _sparse_encoder
 
 
 def _get_reranker() -> Reranker:
@@ -113,9 +126,8 @@ def search(
         session_id: Optional Claude Code session UUID.
         file_path: Optional exact file path match.
 
-    All filter params are AND-combined against vector-store metadata.
-    Note: the BM25/FTS5 leg of hybrid search does not apply these
-    filters; matching vectors still dominate ranking via RRF.
+    All filter params are AND-combined against vector-store metadata
+    and honored by both the dense and sparse (BM25) legs of hybrid search.
     """
     config = _get_config()
     top_k = top_k if top_k > 0 else config.retrieval.final_k
@@ -141,9 +153,8 @@ def search(
     where = where or None
     hybrid = HybridSearch(
         vector_store=_get_vector_store(),
-        metadata_db=_get_metadata_db(),
         embedder=_get_embedder(),
-        rrf_k=config.retrieval.rrf_k,
+        sparse_encoder=_get_sparse_encoder(),
     )
     candidates = hybrid.search(query, top_k=config.retrieval.top_k, collections=collections, where=where)
     if config.retrieval.rerank and candidates:
@@ -174,10 +185,11 @@ def index_repo(path: str = ".", incremental: bool = True, name: str = "") -> str
     if not repo_path.exists():
         return f"Error: path '{path}' does not exist."
     indexer = CodeIndexer(
-        vector_store=_get_vector_store(),
-        metadata_db=_get_metadata_db(),
+        store=_get_vector_store(),
+        meta=_get_metadata_db(),
         embedder=_get_embedder(),
-        config=_get_config(),
+        sparse_encoder=_get_sparse_encoder(),
+        config=_get_config().code,
     )
     stats = indexer.index_repo(repo_path, incremental=incremental, repo_name=name)
     return format_index_stats(stats)
@@ -198,6 +210,7 @@ def index_docs(path: str, glob: str = "**/*.md") -> str:
         vector_store=_get_vector_store(),
         metadata_db=_get_metadata_db(),
         embedder=_get_embedder(),
+        sparse_encoder=_get_sparse_encoder(),
         config=_get_config(),
     )
     stats = indexer.index_docs(docs_path, glob_patterns=glob_patterns)
@@ -226,6 +239,7 @@ def sync_prs(repo: str, since_days: int | None = None) -> str:
         vector_store=_get_vector_store(),
         metadata_db=_get_metadata_db(),
         embedder=_get_embedder(),
+        sparse_encoder=_get_sparse_encoder(),
         github_client=github,
         chunk_max_tokens=config.prs.chunk_max_tokens,
     )
@@ -251,6 +265,7 @@ def sync_issues(repo: str, since_days: int = 90) -> str:
         vector_store=_get_vector_store(),
         metadata_db=_get_metadata_db(),
         embedder=_get_embedder(),
+        sparse_encoder=_get_sparse_encoder(),
         github_client=github,
         chunk_max_tokens=config.issues.chunk_max_tokens,
         include_labels=config.issues.include_labels,
@@ -284,6 +299,7 @@ def sync_jira(since_days: int = 90) -> str:
         vector_store=_get_vector_store(),
         metadata_db=_get_metadata_db(),
         embedder=_get_embedder(),
+        sparse_encoder=_get_sparse_encoder(),
         jira_client=jira,
         chunk_max_tokens=config.jira.chunk_max_tokens,
     )
@@ -310,6 +326,7 @@ def sync_slite(since_days: int = 90) -> str:
         vector_store=_get_vector_store(),
         metadata_db=_get_metadata_db(),
         embedder=_get_embedder(),
+        sparse_encoder=_get_sparse_encoder(),
         slite_client=slite,
         chunk_max_tokens=config.slite.chunk_max_tokens,
         chunk_overlap_tokens=config.slite.chunk_overlap_tokens,
@@ -338,6 +355,7 @@ def sync_sessions(since_days: int = 0) -> str:
         vector_store=_get_vector_store(),
         metadata_db=_get_metadata_db(),
         embedder=_get_embedder(),
+        sparse_encoder=_get_sparse_encoder(),
         logs_dir=logs_dir,
         chunk_max_tokens=config.sessions.chunk_max_tokens,
         backfill_days=config.sessions.backfill_days,

@@ -9,6 +9,7 @@ import pytest
 from devrag.config import DevragConfig
 from devrag.ingest.code_indexer import CodeIndexer
 from devrag.ingest.embedder import OllamaEmbedder
+from devrag.ingest.sparse_encoder import BM25SparseEncoder
 from devrag.retrieve.hybrid_search import HybridSearch
 from devrag.stores.qdrant_store import QdrantStore
 from devrag.stores.metadata_db import MetadataDB
@@ -102,20 +103,21 @@ def e2e_components(tmp_dir):
     store = QdrantStore(path=str(tmp_dir / "qdrant"), embedding_dim=768)
     meta = MetadataDB(str(tmp_dir / "meta.db"))
     embedder = OllamaEmbedder(model="nomic-embed-text")
-    return store, meta, embedder
+    sparse_encoder = BM25SparseEncoder()
+    return store, meta, embedder, sparse_encoder
 
 
 def test_index_and_search_e2e(e2e_repo, e2e_components):
-    store, meta, embedder = e2e_components
+    store, meta, embedder, sparse_encoder = e2e_components
 
     # Index the repo
-    indexer = CodeIndexer(store, meta, embedder)
+    indexer = CodeIndexer(store, meta, embedder, sparse_encoder)
     stats = indexer.index_repo(e2e_repo)
     assert stats.files_indexed >= 2
     assert stats.chunks_created >= 4
 
     # Semantic search: should find auth-related code
-    search = HybridSearch(store, meta, embedder, "code_chunks")
+    search = HybridSearch(store, embedder, sparse_encoder, "code_chunks")
     results = search.search("password authentication and hashing")
     assert len(results) > 0
     top_files = [r.metadata.get("file_path", "") for r in results[:3]]

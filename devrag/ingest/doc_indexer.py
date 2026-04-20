@@ -122,11 +122,12 @@ def chunk_document(text: str, file_path: str, max_tokens: int = 512, overlap_tok
 
 
 class DocIndexer:
-    def __init__(self, vector_store, metadata_db, embedder, config=None) -> None:
+    def __init__(self, vector_store, metadata_db, embedder, sparse_encoder, config=None) -> None:
         from devrag.config import DevragConfig
         self.vector_store = vector_store
         self.metadata_db = metadata_db
         self.embedder = embedder
+        self.sparse_encoder = sparse_encoder
         if config is None:
             config = DevragConfig()
         self.doc_config = config.documents
@@ -158,7 +159,6 @@ class DocIndexer:
             old_chunk_ids = self.metadata_db.get_chunks_for_file(rel_path)
             if old_chunk_ids:
                 self.vector_store.delete("documents", old_chunk_ids)
-                self.metadata_db.delete_fts(old_chunk_ids)
             text = file_path.read_text(errors="replace")
             chunks = chunk_document(text=text, file_path=rel_path,
                                      max_tokens=self.doc_config.chunk_max_tokens,
@@ -168,13 +168,13 @@ class DocIndexer:
                 continue
             texts = [c.text for c in chunks]
             embeddings = self.embedder.embed(texts)
+            sparse_embeddings = self.sparse_encoder.encode(texts)
             self.vector_store.upsert(collection="documents", ids=[c.id for c in chunks],
                                       embeddings=embeddings, documents=texts,
-                                      metadatas=[c.metadata for c in chunks])
+                                      metadatas=[c.metadata for c in chunks],
+                                      sparse_embeddings=sparse_embeddings)
             for chunk in chunks:
                 self.metadata_db.set_chunk_source(chunk.id, rel_path, 0, 0)
-                self.metadata_db.upsert_fts(chunk.id, chunk.text)
-                self.metadata_db.set_chunk_collection(chunk.id, "documents")
             stats.files_indexed += 1
             stats.chunks_created += len(chunks)
         return stats

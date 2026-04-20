@@ -1,126 +1,95 @@
-import pytest
 from unittest.mock import MagicMock
 
-from devrag.retrieve.hybrid_search import HybridSearch, reciprocal_rank_fusion, deduplicate_results
+from qdrant_client.models import SparseVector
+
+from devrag.retrieve.hybrid_search import HybridSearch, deduplicate_results
 from devrag.types import QueryResult, SearchResult
 
 
-def test_rrf_merges_two_rankings():
-    list1 = ["a", "b", "c"]
-    list2 = ["d", "a", "b"]
-    merged = reciprocal_rank_fusion([list1, list2], k=60)
-    assert merged[0] == "a"
-    assert set(merged) == {"a", "b", "c", "d"}
+def _mock_sparse_encoder():
+    enc = MagicMock()
+    enc.encode_query.return_value = SparseVector(indices=[1, 2], values=[0.5, 0.3])
+    return enc
 
 
-def test_rrf_single_list():
-    merged = reciprocal_rank_fusion([["x", "y", "z"]], k=60)
-    assert merged == ["x", "y", "z"]
-
-
-def test_rrf_empty():
-    merged = reciprocal_rank_fusion([], k=60)
-    assert merged == []
-
-
-def test_hybrid_search_combines_vector_and_bm25():
+def test_hybrid_search_calls_hybrid_query():
     mock_store = MagicMock()
-    mock_store.query.return_value = QueryResult(
-        ids=["chunk_1", "chunk_2", "chunk_3"],
-        documents=["def auth(): pass", "class User:", "import os"],
-        metadatas=[{"file_path": "a.py"}, {"file_path": "b.py"}, {"file_path": "c.py"}],
-        distances=[0.1, 0.3, 0.5],
+    mock_store.hybrid_query.return_value = QueryResult(
+        ids=["chunk_1", "chunk_2"],
+        documents=["def auth(): pass", "class User:"],
+        metadatas=[{"file_path": "a.py"}, {"file_path": "b.py"}],
+        distances=[0.9, 0.8],
     )
-    # chunk_4 is a BM25-only result — should now be resolved via get_by_ids
-    mock_store.get_by_ids.return_value = QueryResult(
-        ids=["chunk_4"], documents=["def login(): pass"],
-        metadatas=[{"file_path": "d.py"}], distances=[],
-    )
-    mock_meta = MagicMock()
-    mock_meta.search_fts_scoped.return_value = [
-        ("chunk_2", -5.0), ("chunk_4", -3.0), ("chunk_1", -1.0),
-    ]
     mock_embedder = MagicMock()
     mock_embedder.embed_query.return_value = [0.1] * 768
+    sparse_enc = _mock_sparse_encoder()
 
-    search = HybridSearch(mock_store, mock_meta, mock_embedder, "code_chunks")
+    search = HybridSearch(mock_store, mock_embedder, sparse_enc, "code_chunks")
     results = search.search("authentication", top_k=20)
 
     result_ids = [r.chunk_id for r in results]
-    assert "chunk_1" in result_ids
-    assert "chunk_2" in result_ids
-    # BM25-only result should now be included (was silently dropped before)
-    assert "chunk_4" in result_ids
+    assert result_ids == ["chunk_1", "chunk_2"]
     mock_embedder.embed_query.assert_called_once_with("authentication")
-    mock_store.query.assert_called_once()
-    mock_meta.search_fts_scoped.assert_called_once()
+    sparse_enc.encode_query.assert_called_once_with("authentication")
+    mock_store.hybrid_query.assert_called_once()
 
 
-def test_hybrid_search_with_no_bm25_results():
+def test_hybrid_search_empty_results():
     mock_store = MagicMock()
-    mock_store.query.return_value = QueryResult(
-        ids=["c1"], documents=["text"], metadatas=[{}], distances=[0.1],
-    )
-    mock_meta = MagicMock()
-    mock_meta.search_fts_scoped.return_value = []
+    mock_store.hybrid_query.return_value = QueryResult(ids=[], documents=[], metadatas=[], distances=[])
     mock_embedder = MagicMock()
     mock_embedder.embed_query.return_value = [0.1] * 768
 
-    search = HybridSearch(mock_store, mock_meta, mock_embedder, "code_chunks")
+    search = HybridSearch(mock_store, mock_embedder, _mock_sparse_encoder(), "code_chunks")
     results = search.search("query", top_k=5)
-    assert len(results) == 1
-    assert results[0].chunk_id == "c1"
+    assert results == []
 
 
-def test_hybrid_search_multiple_collections():
+def test_hybrid_search_multiple_collections_merged_by_score():
     mock_store = MagicMock()
-    def mock_query(collection, query_embedding, n_results, where=None):
+    def mock_hybrid_query(collection, dense_embedding, sparse_embedding, n_results, where=None):
         if collection == "code_chunks":
             return QueryResult(ids=["code_1"], documents=["def auth(): pass"],
-                metadatas=[{"file_path": "a.py", "source_type": "code"}], distances=[0.1])
+                metadatas=[{"file_path": "a.py"}], distances=[0.7])
         elif collection == "pr_diffs":
             return QueryResult(ids=["pr_1"], documents=["diff: added auth"],
-                metadatas=[{"pr_number": 1, "source_type": "pr"}], distances=[0.2])
+                metadatas=[{"pr_number": 1}], distances=[0.9])
         return QueryResult(ids=[], documents=[], metadatas=[], distances=[])
-    mock_store.query = MagicMock(side_effect=mock_query)
-    mock_meta = MagicMock()
-    mock_meta.search_fts_scoped.return_value = []
+    mock_store.hybrid_query = MagicMock(side_effect=mock_hybrid_query)
     mock_embedder = MagicMock()
     mock_embedder.embed_query.return_value = [0.1] * 768
-    search = HybridSearch(mock_store, mock_meta, mock_embedder)
+
+    search = HybridSearch(mock_store, mock_embedder, _mock_sparse_encoder())
     results = search.search("auth", top_k=10, collections=["code_chunks", "pr_diffs"])
-    result_ids = [r.chunk_id for r in results]
-    assert "code_1" in result_ids
-    assert "pr_1" in result_ids
+
+    assert [r.chunk_id for r in results] == ["pr_1", "code_1"]
 
 
 def test_hybrid_search_defaults_to_code_chunks():
     mock_store = MagicMock()
-    mock_store.query.return_value = QueryResult(ids=["c1"], documents=["text"], metadatas=[{}], distances=[0.1])
-    mock_meta = MagicMock()
-    mock_meta.search_fts_scoped.return_value = []
-    mock_embedder = MagicMock()
-    mock_embedder.embed_query.return_value = [0.1] * 768
-    search = HybridSearch(mock_store, mock_meta, mock_embedder)
-    results = search.search("query", top_k=5)
-    mock_store.query.assert_called_once()
-    call_kwargs = mock_store.query.call_args
-    assert call_kwargs.kwargs.get("collection", call_kwargs[1].get("collection")) == "code_chunks"
-
-
-def test_hybrid_search_custom_rrf_k():
-    mock_store = MagicMock()
-    mock_store.query.return_value = QueryResult(
-        ids=["c1"], documents=["text"], metadatas=[{"file_path": "a.py"}], distances=[0.1],
+    mock_store.hybrid_query.return_value = QueryResult(
+        ids=["c1"], documents=["text"], metadatas=[{}], distances=[0.9],
     )
-    mock_meta = MagicMock()
-    mock_meta.search_fts_scoped.return_value = []
     mock_embedder = MagicMock()
     mock_embedder.embed_query.return_value = [0.1] * 768
-    search = HybridSearch(mock_store, mock_meta, mock_embedder, rrf_k=10)
-    results = search.search("query", top_k=5)
-    # With rrf_k=10, first result score should be 1/(10+0+1) = 1/11
-    assert abs(results[0].score - 1.0 / 11) < 1e-9
+    search = HybridSearch(mock_store, mock_embedder, _mock_sparse_encoder())
+    search.search("query", top_k=5)
+
+    call_kwargs = mock_store.hybrid_query.call_args
+    assert call_kwargs.kwargs["collection"] == "code_chunks"
+
+
+def test_hybrid_search_propagates_filters():
+    mock_store = MagicMock()
+    mock_store.hybrid_query.return_value = QueryResult(ids=[], documents=[], metadatas=[], distances=[])
+    mock_embedder = MagicMock()
+    mock_embedder.embed_query.return_value = [0.1] * 768
+
+    search = HybridSearch(mock_store, mock_embedder, _mock_sparse_encoder())
+    search.search("query", top_k=5, where={"repo": "my-repo"})
+
+    call_kwargs = mock_store.hybrid_query.call_args
+    assert call_kwargs.kwargs["where"] == {"repo": "my-repo"}
 
 
 def test_deduplicate_results_limits_per_source():
@@ -154,4 +123,4 @@ def test_deduplicate_preserves_order():
         SearchResult(chunk_id="c3", text="c", score=0.7, metadata={"file_path": "c.py"}),
     ]
     deduped = deduplicate_results(results, max_per_source=2)
-    assert deduped == results  # All different sources, nothing removed
+    assert deduped == results

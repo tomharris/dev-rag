@@ -203,7 +203,7 @@ def test_jql_cursor_injection_with_order_by():
 
 # --- Integration tests ---
 
-def test_jira_indexer_sync(tmp_dir):
+def test_jira_indexer_sync(tmp_dir, sparse_encoder):
     from devrag.stores.qdrant_store import QdrantStore
     from devrag.stores.metadata_db import MetadataDB
     store = QdrantStore(path=str(tmp_dir / "qdrant"), embedding_dim=768)
@@ -214,7 +214,7 @@ def test_jira_indexer_sync(tmp_dir):
     mock_jira.search_issues.return_value = iter([
         _make_jira_issue(key="DEV-1", comments=[_make_jira_comment()]),
     ])
-    indexer = JiraIndexer(store, meta, embedder, mock_jira)
+    indexer = JiraIndexer(store, meta, embedder, sparse_encoder, mock_jira)
     stats = indexer.sync(INSTANCE, "project = DEV", since_days=90)
     assert stats.tickets_fetched == 1
     assert stats.tickets_indexed == 1
@@ -225,7 +225,7 @@ def test_jira_indexer_sync(tmp_dir):
     assert meta.get_jira_sync_cursor(cursor_key) is not None
 
 
-def test_jira_indexer_incremental_sync(tmp_dir):
+def test_jira_indexer_incremental_sync(tmp_dir, sparse_encoder):
     from devrag.stores.qdrant_store import QdrantStore
     from devrag.stores.metadata_db import MetadataDB
     store = QdrantStore(path=str(tmp_dir / "qdrant"), embedding_dim=768)
@@ -234,7 +234,7 @@ def test_jira_indexer_incremental_sync(tmp_dir):
     embedder.embed = MagicMock(side_effect=lambda texts: [[0.1] * 768 for _ in texts])
     mock_jira = MagicMock(spec=JiraClient)
     mock_jira.search_issues.return_value = iter([_make_jira_issue(key="DEV-1")])
-    indexer = JiraIndexer(store, meta, embedder, mock_jira)
+    indexer = JiraIndexer(store, meta, embedder, sparse_encoder, mock_jira)
 
     # First sync
     indexer.sync(INSTANCE, "project = DEV", since_days=90)
@@ -263,7 +263,7 @@ def test_iso_to_jql_datetime_with_colon_offset():
     assert _iso_to_jql_datetime("2026-03-02T12:00:00+00:00") == "2026/03/02 12:00"
 
 
-def test_jira_indexer_recovers_from_stale_iso_cursor(tmp_dir):
+def test_jira_indexer_recovers_from_stale_iso_cursor(tmp_dir, sparse_encoder):
     """If a previous (buggy) run stored an ISO-formatted cursor, the next sync should
     defensively normalize it rather than injecting invalid JQL."""
     from devrag.stores.qdrant_store import QdrantStore
@@ -274,7 +274,7 @@ def test_jira_indexer_recovers_from_stale_iso_cursor(tmp_dir):
     embedder.embed = MagicMock(side_effect=lambda texts: [[0.1] * 768 for _ in texts])
     mock_jira = MagicMock(spec=JiraClient)
     mock_jira.search_issues.return_value = iter([])
-    indexer = JiraIndexer(store, meta, embedder, mock_jira)
+    indexer = JiraIndexer(store, meta, embedder, sparse_encoder, mock_jira)
 
     cursor_key = _make_cursor_key(INSTANCE, "project = DEV")
     meta.set_jira_sync_cursor(cursor_key, "2026-03-02T12:00:00.000+0000")
@@ -284,7 +284,7 @@ def test_jira_indexer_recovers_from_stale_iso_cursor(tmp_dir):
     assert 'updated >= "2026/03/02 12:00"' in effective_jql
 
 
-def test_jira_indexer_stored_cursor_is_valid_jql_format(tmp_dir):
+def test_jira_indexer_stored_cursor_is_valid_jql_format(tmp_dir, sparse_encoder):
     """Regression: cursor must be stored in JQL datetime format, not raw ISO from Jira API.
     If this fails, the next sync's JQL clause will be malformed and incremental sync won't work."""
     from devrag.stores.qdrant_store import QdrantStore
@@ -297,7 +297,7 @@ def test_jira_indexer_stored_cursor_is_valid_jql_format(tmp_dir):
     mock_jira.search_issues.return_value = iter([
         _make_jira_issue(key="DEV-1", updated="2026-03-02T12:00:00.000+0000"),
     ])
-    indexer = JiraIndexer(store, meta, embedder, mock_jira)
+    indexer = JiraIndexer(store, meta, embedder, sparse_encoder, mock_jira)
     indexer.sync(INSTANCE, "project = DEV", since_days=90)
 
     cursor = meta.get_jira_sync_cursor(_make_cursor_key(INSTANCE, "project = DEV"))

@@ -10,7 +10,16 @@ class MetadataDB:
         self._conn = sqlite3.connect(db_path, check_same_thread=False)
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._migrate_add_repo_column()
+        self._migrate_drop_fts()
         self._create_tables()
+
+    def _migrate_drop_fts(self) -> None:
+        """BM25 moved into Qdrant as sparse vectors. Drop the legacy FTS tables."""
+        self._conn.executescript("""
+            DROP TABLE IF EXISTS chunks_fts;
+            DROP TABLE IF EXISTS chunk_collections;
+        """)
+        self._conn.commit()
 
     def _migrate_add_repo_column(self) -> None:
         """Migrate file_hashes and chunk_sources to include repo column."""
@@ -92,9 +101,6 @@ class MetadataDB:
             CREATE INDEX IF NOT EXISTS idx_chunk_sources_repo_file
                 ON chunk_sources(repo, file_path);
 
-            CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts
-                USING fts5(chunk_id UNINDEXED, content);
-
             CREATE TABLE IF NOT EXISTS pr_sync_cursors (
                 repo TEXT PRIMARY KEY,
                 last_synced TEXT NOT NULL
@@ -165,14 +171,6 @@ class MetadataDB:
             CREATE INDEX IF NOT EXISTS idx_session_chunk_sources_cursor_session
                 ON session_chunk_sources(cursor_key, session_id);
 
-            CREATE TABLE IF NOT EXISTS chunk_collections (
-                chunk_id TEXT PRIMARY KEY,
-                collection TEXT NOT NULL
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_chunk_collections_collection
-                ON chunk_collections(collection);
-
             CREATE TABLE IF NOT EXISTS query_metrics (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 query TEXT NOT NULL,
@@ -200,12 +198,6 @@ class MetadataDB:
         return [(r[0], r[1]) for r in rows]
 
     def remove_repo(self, repo: str) -> None:
-        chunk_ids = self._conn.execute(
-            "SELECT chunk_id FROM chunk_sources WHERE repo = ?", (repo,)
-        ).fetchall()
-        if chunk_ids:
-            ids = [r[0] for r in chunk_ids]
-            self.delete_fts(ids)
         self._conn.execute("DELETE FROM chunk_sources WHERE repo = ?", (repo,))
         self._conn.execute("DELETE FROM file_hashes WHERE repo = ?", (repo,))
         self._conn.execute("DELETE FROM code_repos WHERE repo = ?", (repo,))
@@ -214,8 +206,6 @@ class MetadataDB:
     def reset_all(self) -> None:
         """Clear all index state: chunks, cursors, file hashes, repos. Preserves query_metrics."""
         self._conn.executescript("""
-            DELETE FROM chunks_fts;
-            DELETE FROM chunk_collections;
             DELETE FROM chunk_sources;
             DELETE FROM file_hashes;
             DELETE FROM code_repos;
@@ -246,7 +236,6 @@ class MetadataDB:
         self._conn.commit()
 
     def remove_file(self, file_path: str, repo: str = "") -> None:
-        self.delete_fts_for_file(file_path, repo=repo)
         self._conn.execute(
             "DELETE FROM chunk_sources WHERE repo = ? AND file_path = ?", (repo, file_path)
         )
@@ -278,59 +267,6 @@ class MetadataDB:
         ).fetchall()
         return [r[0] for r in rows]
 
-    def upsert_fts(self, chunk_id: str, content: str) -> None:
-        self._conn.execute("DELETE FROM chunks_fts WHERE chunk_id = ?", (chunk_id,))
-        self._conn.execute("INSERT INTO chunks_fts (chunk_id, content) VALUES (?, ?)", (chunk_id, content))
-        self._conn.commit()
-
-    def delete_fts(self, chunk_ids: list[str]) -> None:
-        placeholders = ",".join("?" for _ in chunk_ids)
-        self._conn.execute(f"DELETE FROM chunks_fts WHERE chunk_id IN ({placeholders})", chunk_ids)
-        self._conn.execute(f"DELETE FROM chunk_collections WHERE chunk_id IN ({placeholders})", chunk_ids)
-        self._conn.commit()
-
-    def delete_fts_for_file(self, file_path: str, repo: str = "") -> None:
-        chunk_ids = self.get_chunks_for_file(file_path, repo=repo)
-        if chunk_ids:
-            self.delete_fts(chunk_ids)
-
-    def set_chunk_collection(self, chunk_id: str, collection: str) -> None:
-        self._conn.execute(
-            "INSERT OR REPLACE INTO chunk_collections (chunk_id, collection) VALUES (?, ?)",
-            (chunk_id, collection),
-        )
-        self._conn.commit()
-
-    def delete_chunk_collections(self, chunk_ids: list[str]) -> None:
-        if not chunk_ids:
-            return
-        placeholders = ",".join("?" for _ in chunk_ids)
-        self._conn.execute(f"DELETE FROM chunk_collections WHERE chunk_id IN ({placeholders})", chunk_ids)
-        self._conn.commit()
-
-    def search_fts(self, query: str, limit: int = 20) -> list[tuple[str, float]]:
-        rows = self._conn.execute(
-            "SELECT chunk_id, bm25(chunks_fts) as score FROM chunks_fts WHERE chunks_fts MATCH ? ORDER BY score LIMIT ?",
-            (query, limit),
-        ).fetchall()
-        return [(r[0], r[1]) for r in rows]
-
-    def search_fts_scoped(self, query: str, collections: list[str], limit: int = 20) -> list[tuple[str, float]]:
-        """BM25 search scoped to specific collections. Falls back to unscoped if chunk_collections is empty."""
-        has_mappings = self._conn.execute("SELECT 1 FROM chunk_collections LIMIT 1").fetchone()
-        if not has_mappings:
-            return self.search_fts(query, limit)
-        placeholders = ",".join("?" for _ in collections)
-        rows = self._conn.execute(
-            f"SELECT f.chunk_id, bm25(chunks_fts) as score "
-            f"FROM chunks_fts f "
-            f"JOIN chunk_collections cc ON cc.chunk_id = f.chunk_id "
-            f"WHERE chunks_fts MATCH ? AND cc.collection IN ({placeholders}) "
-            f"ORDER BY score LIMIT ?",
-            [query, *collections, limit],
-        ).fetchall()
-        return [(r[0], r[1]) for r in rows]
-
     def get_pr_sync_cursor(self, repo: str) -> str | None:
         row = self._conn.execute(
             "SELECT last_synced FROM pr_sync_cursors WHERE repo = ?", (repo,)
@@ -361,7 +297,6 @@ class MetadataDB:
     def delete_chunks_for_pr(self, repo: str, pr_number: int) -> None:
         chunk_ids = self.get_chunks_for_pr(repo, pr_number)
         if chunk_ids:
-            self.delete_fts(chunk_ids)
             placeholders = ",".join("?" for _ in chunk_ids)
             self._conn.execute(
                 f"DELETE FROM pr_chunk_sources WHERE chunk_id IN ({placeholders})",
@@ -399,7 +334,6 @@ class MetadataDB:
     def delete_chunks_for_issue(self, repo: str, issue_number: int) -> None:
         chunk_ids = self.get_chunks_for_issue(repo, issue_number)
         if chunk_ids:
-            self.delete_fts(chunk_ids)
             placeholders = ",".join("?" for _ in chunk_ids)
             self._conn.execute(
                 f"DELETE FROM issue_chunk_sources WHERE chunk_id IN ({placeholders})",
@@ -437,7 +371,6 @@ class MetadataDB:
     def delete_chunks_for_jira_ticket(self, instance_url: str, ticket_key: str) -> None:
         chunk_ids = self.get_chunks_for_jira_ticket(instance_url, ticket_key)
         if chunk_ids:
-            self.delete_fts(chunk_ids)
             placeholders = ",".join("?" for _ in chunk_ids)
             self._conn.execute(
                 f"DELETE FROM jira_chunk_sources WHERE chunk_id IN ({placeholders})",
@@ -475,7 +408,6 @@ class MetadataDB:
     def delete_chunks_for_slite_page(self, workspace_id: str, page_id: str) -> None:
         chunk_ids = self.get_chunks_for_slite_page(workspace_id, page_id)
         if chunk_ids:
-            self.delete_fts(chunk_ids)
             placeholders = ",".join("?" for _ in chunk_ids)
             self._conn.execute(
                 f"DELETE FROM slite_chunk_sources WHERE chunk_id IN ({placeholders})",

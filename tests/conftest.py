@@ -2,6 +2,7 @@ import tempfile
 from pathlib import Path
 
 import pytest
+from qdrant_client.models import SparseVector
 
 
 @pytest.fixture
@@ -14,6 +15,24 @@ def tmp_dir():
 def vector_store(tmp_dir):
     from devrag.stores.qdrant_store import QdrantStore
     return QdrantStore(path=str(tmp_dir / "qdrant"), embedding_dim=768)
+
+
+class _StubSparseEncoder:
+    """Lightweight sparse encoder for tests — avoids FastEmbed model download."""
+
+    def encode(self, texts):
+        return [SparseVector(indices=[hash(t) % 1000], values=[1.0]) if t.strip()
+                else SparseVector(indices=[], values=[]) for t in texts]
+
+    def encode_query(self, text):
+        if not text.strip():
+            return SparseVector(indices=[], values=[])
+        return SparseVector(indices=[hash(text) % 1000], values=[1.0])
+
+
+@pytest.fixture
+def sparse_encoder():
+    return _StubSparseEncoder()
 
 
 @pytest.fixture

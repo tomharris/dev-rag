@@ -423,11 +423,13 @@ class CodeIndexer:
         store: VectorStore,
         meta: MetadataDB,
         embedder: Any,
+        sparse_encoder: Any,
         config: CodeConfig | None = None,
     ) -> None:
         self._store = store
         self._meta = meta
         self._embedder = embedder
+        self._sparse_encoder = sparse_encoder
         self._config = config or CodeConfig()
 
     # ------------------------------------------------------------------
@@ -537,6 +539,7 @@ class CodeIndexer:
 
         texts = [c.text for c in chunks]
         embeddings = self._embedder.embed(texts)
+        sparse_embeddings = self._sparse_encoder.encode(texts)
 
         ids = [c.id for c in chunks]
         metadatas = [c.metadata for c in chunks]
@@ -547,10 +550,10 @@ class CodeIndexer:
             embeddings=embeddings,
             documents=texts,
             metadatas=metadatas,
+            sparse_embeddings=sparse_embeddings,
         )
 
-        # Record metadata
-        for chunk, emb in zip(chunks, embeddings):
+        for chunk in chunks:
             self._meta.set_chunk_source(
                 chunk_id=chunk.id,
                 file_path=file_path,
@@ -558,7 +561,5 @@ class CodeIndexer:
                 line_end=chunk.metadata.get("line_end", 0),
                 repo=repo,
             )
-            self._meta.upsert_fts(chunk.id, chunk.text)
-            self._meta.set_chunk_collection(chunk.id, _COLLECTION)
 
         self._meta.set_file_hash(file_path, file_hash, repo=repo)

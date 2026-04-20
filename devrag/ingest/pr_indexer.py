@@ -81,10 +81,11 @@ def chunk_pr(pr: dict, files: list[dict], comments: list[dict], repo: str, max_t
 
 
 class PRIndexer:
-    def __init__(self, vector_store, metadata_db, embedder, github_client, chunk_max_tokens: int = 512) -> None:
+    def __init__(self, vector_store, metadata_db, embedder, sparse_encoder, github_client, chunk_max_tokens: int = 512) -> None:
         self.vector_store = vector_store
         self.metadata_db = metadata_db
         self.embedder = embedder
+        self.sparse_encoder = sparse_encoder
         self.github = github_client
         self.chunk_max_tokens = chunk_max_tokens
 
@@ -121,7 +122,9 @@ class PRIndexer:
 
             texts = [c.text for c in chunks]
             embeddings = self.embedder.embed(texts)
+            sparse_embeddings = self.sparse_encoder.encode(texts)
             embed_map = {c.id: embeddings[i] for i, c in enumerate(chunks)}
+            sparse_map = {c.id: sparse_embeddings[i] for i, c in enumerate(chunks)}
 
             diff_chunks = [c for c in chunks if c.metadata["chunk_type"] in ("diff", "description")]
             discussion_chunks = [c for c in chunks if c.metadata["chunk_type"] == "review_comment"]
@@ -132,6 +135,7 @@ class PRIndexer:
                     embeddings=[embed_map[c.id] for c in diff_chunks],
                     documents=[c.text for c in diff_chunks],
                     metadatas=[c.metadata for c in diff_chunks],
+                    sparse_embeddings=[sparse_map[c.id] for c in diff_chunks],
                 )
             if discussion_chunks:
                 self.vector_store.upsert(
@@ -139,13 +143,11 @@ class PRIndexer:
                     embeddings=[embed_map[c.id] for c in discussion_chunks],
                     documents=[c.text for c in discussion_chunks],
                     metadatas=[c.metadata for c in discussion_chunks],
+                    sparse_embeddings=[sparse_map[c.id] for c in discussion_chunks],
                 )
 
             for chunk in chunks:
                 self.metadata_db.set_pr_chunk_source(chunk.id, repo, pr["number"])
-                self.metadata_db.upsert_fts(chunk.id, chunk.text)
-                coll = "pr_discussions" if chunk.metadata["chunk_type"] == "review_comment" else "pr_diffs"
-                self.metadata_db.set_chunk_collection(chunk.id, coll)
 
             stats.prs_indexed += 1
             stats.chunks_created += len(chunks)

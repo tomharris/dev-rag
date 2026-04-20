@@ -54,7 +54,7 @@ def test_chunk_ids_deterministic():
     assert [c.id for c in c1] == [c.id for c in c2]
 
 
-def test_doc_indexer_indexes_directory(tmp_dir):
+def test_doc_indexer_indexes_directory(tmp_dir, sparse_encoder):
     docs_dir = tmp_dir / "docs"
     docs_dir.mkdir()
     (docs_dir / "guide.md").write_text("# User Guide\n\nHow to use the app.\n\n## Setup\n\nInstall deps.\n")
@@ -65,7 +65,7 @@ def test_doc_indexer_indexes_directory(tmp_dir):
     meta.get_file_hash.return_value = None
     embedder = MagicMock()
     embedder.embed = MagicMock(side_effect=lambda texts: [[0.1] * 768 for _ in texts])
-    indexer = DocIndexer(store, meta, embedder)
+    indexer = DocIndexer(store, meta, embedder, sparse_encoder)
     stats = indexer.index_docs(docs_dir, glob_patterns=["**/*.md", "**/*.txt"])
     assert stats.files_scanned >= 2
     assert stats.files_indexed >= 2

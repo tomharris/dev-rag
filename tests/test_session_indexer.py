@@ -101,7 +101,7 @@ def test_assistant_text_drops_thinking_keeps_text_summarizes_tool_use():
 
 # --- Chunking ---
 
-def test_chunk_session_file_pairs_user_and_assistant(tmp_dir):
+def test_chunk_session_file_pairs_user_and_assistant(tmp_dir, sparse_encoder):
     path = tmp_dir / "sess-a.jsonl"
     _write_jsonl(path, [
         _user("How do I run tests?"),
@@ -120,7 +120,7 @@ def test_chunk_session_file_pairs_user_and_assistant(tmp_dir):
     assert chunks[1].metadata["turn_index"] == 1
 
 
-def test_chunk_session_file_spans_tool_calls_in_one_exchange(tmp_dir):
+def test_chunk_session_file_spans_tool_calls_in_one_exchange(tmp_dir, sparse_encoder):
     path = tmp_dir / "sess-b.jsonl"
     _write_jsonl(path, [
         _user("Read foo.py", session="sess-b"),
@@ -136,7 +136,7 @@ def test_chunk_session_file_spans_tool_calls_in_one_exchange(tmp_dir):
     assert "Here's what's in the file." in body
 
 
-def test_chunk_session_file_skips_non_user_assistant_entries(tmp_dir):
+def test_chunk_session_file_skips_non_user_assistant_entries(tmp_dir, sparse_encoder):
     path = tmp_dir / "sess-c.jsonl"
     _write_jsonl(path, [
         {"type": "file-history-snapshot", "snapshot": {}},
@@ -149,7 +149,7 @@ def test_chunk_session_file_skips_non_user_assistant_entries(tmp_dir):
     assert len(chunks) == 1
 
 
-def test_chunk_session_file_deterministic_ids(tmp_dir):
+def test_chunk_session_file_deterministic_ids(tmp_dir, sparse_encoder):
     path = tmp_dir / "sess-d.jsonl"
     _write_jsonl(path, [
         _user("q", session="sess-d"),
@@ -168,7 +168,7 @@ def test_make_chunk_id_varies_by_session_and_turn():
     assert len(a) == 16
 
 
-def test_chunk_session_file_truncates_long_body(tmp_dir):
+def test_chunk_session_file_truncates_long_body(tmp_dir, sparse_encoder):
     path = tmp_dir / "long.jsonl"
     _write_jsonl(path, [
         _user("q", session="long"),
@@ -181,7 +181,7 @@ def test_chunk_session_file_truncates_long_body(tmp_dir):
 
 # --- Indexer end-to-end ---
 
-def test_sessions_indexer_indexes_and_sets_cursor(tmp_dir):
+def test_sessions_indexer_indexes_and_sets_cursor(tmp_dir, sparse_encoder):
     from devrag.stores.qdrant_store import QdrantStore
     from devrag.stores.metadata_db import MetadataDB
 
@@ -197,7 +197,7 @@ def test_sessions_indexer_indexes_and_sets_cursor(tmp_dir):
     embedder = MagicMock()
     embedder.embed = MagicMock(side_effect=lambda texts: [[0.1] * 768 for _ in texts])
 
-    indexer = SessionsIndexer(store, meta, embedder, tmp_dir / "projects", chunk_max_tokens=512)
+    indexer = SessionsIndexer(store, meta, embedder, sparse_encoder, tmp_dir / "projects", chunk_max_tokens=512)
     stats = indexer.sync(since_days=30)
 
     assert stats.files_scanned == 1
@@ -208,7 +208,7 @@ def test_sessions_indexer_indexes_and_sets_cursor(tmp_dir):
     assert meta.get_session_sync_cursor("default") is not None
 
 
-def test_sessions_indexer_incremental_skip(tmp_dir):
+def test_sessions_indexer_incremental_skip(tmp_dir, sparse_encoder):
     from devrag.stores.qdrant_store import QdrantStore
     from devrag.stores.metadata_db import MetadataDB
 
@@ -224,7 +224,7 @@ def test_sessions_indexer_incremental_skip(tmp_dir):
     meta = MetadataDB(str(tmp_dir / "meta.db"))
     embedder = MagicMock()
     embedder.embed = MagicMock(side_effect=lambda texts: [[0.1] * 768 for _ in texts])
-    indexer = SessionsIndexer(store, meta, embedder, tmp_dir / "projects")
+    indexer = SessionsIndexer(store, meta, embedder, sparse_encoder, tmp_dir / "projects")
 
     indexer.sync(since_days=30)
     stats2 = indexer.sync()  # incremental from cursor

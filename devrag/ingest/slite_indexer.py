@@ -135,6 +135,7 @@ class SliteIndexer:
         vector_store,
         metadata_db,
         embedder,
+        sparse_encoder,
         slite_client: SliteClient,
         chunk_max_tokens: int = 512,
         chunk_overlap_tokens: int = 50,
@@ -143,6 +144,7 @@ class SliteIndexer:
         self.vector_store = vector_store
         self.metadata_db = metadata_db
         self.embedder = embedder
+        self.sparse_encoder = sparse_encoder
         self.slite = slite_client
         self.chunk_max_tokens = chunk_max_tokens
         self.chunk_overlap_tokens = chunk_overlap_tokens
@@ -213,17 +215,17 @@ class SliteIndexer:
 
             texts = [_truncate_text(c.text, self.chunk_max_tokens) for c in chunks]
             embeddings = self.embedder.embed(texts)
+            sparse_embeddings = self.sparse_encoder.encode(texts)
             self.vector_store.upsert(
                 collection="slite_pages",
                 ids=[c.id for c in chunks],
                 embeddings=embeddings,
                 documents=texts,
                 metadatas=[c.metadata for c in chunks],
+                sparse_embeddings=sparse_embeddings,
             )
             for chunk in chunks:
                 self.metadata_db.set_slite_chunk_source(chunk.id, cursor_key, note_id)
-                self.metadata_db.upsert_fts(chunk.id, chunk.text)
-                self.metadata_db.set_chunk_collection(chunk.id, "slite_pages")
 
             stats.pages_indexed += 1
             stats.chunks_created += len(chunks)

@@ -159,6 +159,7 @@ class SessionsIndexer:
         vector_store,
         metadata_db,
         embedder,
+        sparse_encoder,
         logs_dir: Path,
         chunk_max_tokens: int = 512,
         backfill_days: int = 60,
@@ -166,6 +167,7 @@ class SessionsIndexer:
         self.vector_store = vector_store
         self.metadata_db = metadata_db
         self.embedder = embedder
+        self.sparse_encoder = sparse_encoder
         self.logs_dir = logs_dir
         self.chunk_max_tokens = chunk_max_tokens
         self.backfill_days = backfill_days
@@ -213,22 +215,21 @@ class SessionsIndexer:
             stale_ids = [cid for cid in old_ids if cid not in current_ids]
             if stale_ids:
                 self.vector_store.delete(COLLECTION, stale_ids)
-                self.metadata_db.delete_fts(stale_ids)
                 self.metadata_db.delete_session_chunk_sources(stale_ids)
 
             texts = [c.text for c in chunks]
             embeddings = self.embedder.embed(texts)
+            sparse_embeddings = self.sparse_encoder.encode(texts)
             self.vector_store.upsert(
                 collection=COLLECTION,
                 ids=[c.id for c in chunks],
                 embeddings=embeddings,
                 documents=texts,
                 metadatas=[c.metadata for c in chunks],
+                sparse_embeddings=sparse_embeddings,
             )
             for chunk in chunks:
                 self.metadata_db.set_session_chunk_source(chunk.id, CURSOR_KEY, session_id)
-                self.metadata_db.upsert_fts(chunk.id, chunk.text)
-                self.metadata_db.set_chunk_collection(chunk.id, COLLECTION)
 
             stats.files_indexed += 1
             stats.chunks_created += len(chunks)
