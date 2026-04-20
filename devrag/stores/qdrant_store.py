@@ -20,6 +20,8 @@ if TYPE_CHECKING:
 DENSE_VECTOR = "dense"
 SPARSE_VECTOR = "bm25"
 
+_UPSERT_BATCH_SIZE = 32
+
 PAYLOAD_INDEX_FIELDS: dict[str, PayloadSchemaType] = {
     "repo": PayloadSchemaType.KEYWORD,
     "file_path": PayloadSchemaType.KEYWORD,
@@ -118,7 +120,9 @@ class QdrantStore:
             if sparse_embeddings is not None:
                 vector[SPARSE_VECTOR] = sparse_embeddings[i]
             points.append(PointStruct(id=_to_uuid(doc_id), vector=vector, payload=payload))
-        self._client.upsert(collection_name=collection, points=points, wait=wait)
+        for start in range(0, len(points), _UPSERT_BATCH_SIZE):
+            batch = points[start:start + _UPSERT_BATCH_SIZE]
+            self._client.upsert(collection_name=collection, points=batch, wait=wait)
 
     def _build_filter(self, where: dict | None) -> Filter | None:
         if not where:
