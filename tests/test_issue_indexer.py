@@ -73,9 +73,9 @@ def test_chunk_issue_truncation():
 
 
 def test_issue_indexer_sync(tmp_dir):
-    from devrag.stores.chroma_store import ChromaStore
+    from devrag.stores.qdrant_store import QdrantStore
     from devrag.stores.metadata_db import MetadataDB
-    store = ChromaStore(persist_dir=str(tmp_dir / "chroma"))
+    store = QdrantStore(path=str(tmp_dir / "qdrant"), embedding_dim=768)
     meta = MetadataDB(str(tmp_dir / "meta.db"))
     embedder = MagicMock()
     embedder.embed = MagicMock(side_effect=lambda texts: [[0.1] * 768 for _ in texts])
@@ -99,9 +99,9 @@ def test_issue_indexer_sync(tmp_dir):
 
 
 def test_issue_indexer_incremental_sync(tmp_dir):
-    from devrag.stores.chroma_store import ChromaStore
+    from devrag.stores.qdrant_store import QdrantStore
     from devrag.stores.metadata_db import MetadataDB
-    store = ChromaStore(persist_dir=str(tmp_dir / "chroma"))
+    store = QdrantStore(path=str(tmp_dir / "qdrant"), embedding_dim=768)
     meta = MetadataDB(str(tmp_dir / "meta.db"))
     embedder = MagicMock()
     embedder.embed = MagicMock(side_effect=lambda texts: [[0.1] * 768 for _ in texts])
@@ -124,9 +124,9 @@ def test_issue_indexer_incremental_sync(tmp_dir):
 
 
 def test_issue_indexer_include_labels(tmp_dir):
-    from devrag.stores.chroma_store import ChromaStore
+    from devrag.stores.qdrant_store import QdrantStore
     from devrag.stores.metadata_db import MetadataDB
-    store = ChromaStore(persist_dir=str(tmp_dir / "chroma"))
+    store = QdrantStore(path=str(tmp_dir / "qdrant"), embedding_dim=768)
     meta = MetadataDB(str(tmp_dir / "meta.db"))
     embedder = MagicMock()
     embedder.embed = MagicMock(side_effect=lambda texts: [[0.1] * 768 for _ in texts])
@@ -144,9 +144,9 @@ def test_issue_indexer_include_labels(tmp_dir):
 
 
 def test_issue_indexer_exclude_labels(tmp_dir):
-    from devrag.stores.chroma_store import ChromaStore
+    from devrag.stores.qdrant_store import QdrantStore
     from devrag.stores.metadata_db import MetadataDB
-    store = ChromaStore(persist_dir=str(tmp_dir / "chroma"))
+    store = QdrantStore(path=str(tmp_dir / "qdrant"), embedding_dim=768)
     meta = MetadataDB(str(tmp_dir / "meta.db"))
     embedder = MagicMock()
     embedder.embed = MagicMock(side_effect=lambda texts: [[0.1] * 768 for _ in texts])
@@ -164,9 +164,9 @@ def test_issue_indexer_exclude_labels(tmp_dir):
 
 
 def test_issue_indexer_include_and_exclude_labels(tmp_dir):
-    from devrag.stores.chroma_store import ChromaStore
+    from devrag.stores.qdrant_store import QdrantStore
     from devrag.stores.metadata_db import MetadataDB
-    store = ChromaStore(persist_dir=str(tmp_dir / "chroma"))
+    store = QdrantStore(path=str(tmp_dir / "qdrant"), embedding_dim=768)
     meta = MetadataDB(str(tmp_dir / "meta.db"))
     embedder = MagicMock()
     embedder.embed = MagicMock(side_effect=lambda texts: [[0.1] * 768 for _ in texts])

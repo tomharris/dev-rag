@@ -75,9 +75,9 @@ def test_chunk_ids_are_deterministic():
 
 
 def test_pr_indexer_sync(tmp_dir):
-    from devrag.stores.chroma_store import ChromaStore
+    from devrag.stores.qdrant_store import QdrantStore
     from devrag.stores.metadata_db import MetadataDB
-    store = ChromaStore(persist_dir=str(tmp_dir / "chroma"))
+    store = QdrantStore(path=str(tmp_dir / "qdrant"), embedding_dim=768)
     meta = MetadataDB(str(tmp_dir / "meta.db"))
     embedder = MagicMock()
     embedder.embed = MagicMock(side_effect=lambda texts: [[0.1] * 768 for _ in texts])
@@ -97,9 +97,9 @@ def test_pr_indexer_sync(tmp_dir):
 
 
 def test_pr_indexer_uses_cursor_when_since_days_none(tmp_dir):
-    from devrag.stores.chroma_store import ChromaStore
+    from devrag.stores.qdrant_store import QdrantStore
     from devrag.stores.metadata_db import MetadataDB
-    store = ChromaStore(persist_dir=str(tmp_dir / "chroma"))
+    store = QdrantStore(path=str(tmp_dir / "qdrant"), embedding_dim=768)
     meta = MetadataDB(str(tmp_dir / "meta.db"))
     meta.set_pr_sync_cursor("acme/backend", "2026-03-15T10:00:00Z")
     embedder = MagicMock()
@@ -116,9 +116,9 @@ def test_pr_indexer_uses_cursor_when_since_days_none(tmp_dir):
 
 
 def test_pr_indexer_since_days_overrides_cursor(tmp_dir):
-    from devrag.stores.chroma_store import ChromaStore
+    from devrag.stores.qdrant_store import QdrantStore
     from devrag.stores.metadata_db import MetadataDB
-    store = ChromaStore(persist_dir=str(tmp_dir / "chroma"))
+    store = QdrantStore(path=str(tmp_dir / "qdrant"), embedding_dim=768)
     meta = MetadataDB(str(tmp_dir / "meta.db"))
     # Cursor is set but caller explicitly asks for a 180-day backfill.
     meta.set_pr_sync_cursor("acme/backend", "2026-03-15T10:00:00Z")

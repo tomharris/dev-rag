@@ -9,7 +9,7 @@ import tree_sitter_language_pack as tslp
 from tree_sitter import Node, Parser
 
 from devrag.config import CodeConfig
-from devrag.stores.chroma_store import ChromaStore
+from devrag.stores.base import VectorStore
 from devrag.stores.metadata_db import MetadataDB
 from devrag.types import Chunk, IndexStats
 from devrag.utils.git import discover_files
@@ -416,11 +416,11 @@ _COLLECTION = "code_chunks"
 
 
 class CodeIndexer:
-    """Indexes a repository's source code into ChromaStore + MetadataDB."""
+    """Indexes a repository's source code into the vector store + MetadataDB."""
 
     def __init__(
         self,
-        store: ChromaStore,
+        store: VectorStore,
         meta: MetadataDB,
         embedder: Any,
         config: CodeConfig | None = None,

@@ -199,8 +199,7 @@ The `rag-first` skill fires automatically when Claude detects a codebase questio
 ┌─────────────────────────────────────────────────────────────────────┐
 │                     STORAGE LAYER                                   │
 │  VectorStore Protocol                                              │
-│    ├─ ChromaDB (default, embedded, zero-config)                    │
-│    └─ Qdrant (optional, for scale)                                 │
+│    └─ Qdrant (HTTP or embedded local path)                         │
 │  SQLite: file hashes, chunk mappings, PR cursors, FTS5, metrics    │
 └────────────┬────────────────────────────────────────────────────────┘
              │
@@ -246,9 +245,8 @@ embedding:
   max_tokens: 8192                   # Truncation limit for embedding context
 
 vector_store:
-  backend: chromadb              # chromadb or qdrant
-  persist_dir: ~/.local/share/devrag/chroma
-  qdrant_url: http://localhost:6333  # if backend: qdrant
+  qdrant_url: http://localhost:6333  # Qdrant HTTP endpoint
+  qdrant_path: ""                    # optional: local filesystem path for embedded mode (no server needed)
   embedding_dim: 768                 # Vector dimensionality
 
 retrieval:
@@ -310,23 +308,29 @@ documents:
 
 DevRAG respects `.gitignore` by default. For additional exclusions specific to the index, create a `.devragignore` file (same syntax as `.gitignore`).
 
-## Scaling Up
+## Deployment Modes
 
-DevRAG starts with ChromaDB (embedded, zero-config) and can scale to Qdrant when needed:
+DevRAG uses Qdrant as its vector store. You can run it either embedded (local filesystem, no server needed) or against a Qdrant server.
 
-```bash
-# Start Qdrant
-docker run -d -p 6333:6333 -v qdrant_data:/qdrant/storage qdrant/qdrant
+**Embedded mode** (single-user, no server):
 
-# Switch backend
-devrag config set vector_store.backend qdrant
-devrag config set vector_store.qdrant_url http://localhost:6333
-
-# Re-index with new backend
-devrag reindex --all
+```yaml
+vector_store:
+  qdrant_path: ~/.local/share/devrag/qdrant
 ```
 
-The vector store is abstracted behind a `VectorStore` Protocol — switching backends is a config change, not a code change.
+**Server mode** (shared, scales horizontally):
+
+```bash
+docker run -d -p 6333:6333 -v qdrant_data:/qdrant/storage qdrant/qdrant
+```
+
+```yaml
+vector_store:
+  qdrant_url: http://localhost:6333
+```
+
+Switching modes is a config change; re-index with `devrag reindex --all` after switching.
 
 ## Development
 

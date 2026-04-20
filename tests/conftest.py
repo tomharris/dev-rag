@@ -11,6 +11,12 @@ def tmp_dir():
 
 
 @pytest.fixture
+def vector_store(tmp_dir):
+    from devrag.stores.qdrant_store import QdrantStore
+    return QdrantStore(path=str(tmp_dir / "qdrant"), embedding_dim=768)
+
+
+@pytest.fixture
 def sample_python_file(tmp_dir):
     code = '''"""Module docstring."""
 

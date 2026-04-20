@@ -42,8 +42,8 @@ DevRAG is a local RAG system that ingests code, GitHub PRs, GitHub issues, Jira 
 - `doc_indexer.py` - Section-aware markdown/text splitting with token-based overlap.
 - `embedder.py` - Ollama embedding wrapper (default: `nomic-embed-text`). Truncates oversized text to `max_tokens` (default 8192) before embedding. Skips empty texts and returns zero vectors for their positions.
 
-**Storage** (`devrag/stores/`) - Pluggable vector store with metadata tracking:
-- `base.py` defines a `VectorStore` Protocol. `chroma_store.py` (default) and `qdrant_store.py` implement it. `factory.py` selects backend from config.
+**Storage** (`devrag/stores/`) - Qdrant vector store with metadata tracking:
+- `base.py` defines a `VectorStore` Protocol. `qdrant_store.py` implements it. `factory.py` constructs it from config — HTTP (`qdrant_url`) or embedded (`qdrant_path`, local filesystem).
 - `metadata_db.py` - SQLite with WAL for file hashes, chunk-source mappings, PR/issue/Jira/Slite/session sync cursors, FTS5 index (BM25), and query metrics.
 - Ten collections: `code_chunks`, `pr_diffs`, `pr_discussions`, `issue_descriptions`, `issue_discussions`, `jira_descriptions`, `jira_discussions`, `slite_pages`, `documents`, `session_logs`. The authoritative list lives in `ALL_COLLECTIONS` in `devrag/retrieve/query_router.py`.
 
@@ -70,8 +70,8 @@ Nested dataclass hierarchy in `devrag/config.py`. Loaded from `~/.config/devrag/
 
 - **Multi-repo indexing**: Multiple repos can be indexed into a unified search space. Each repo is tracked independently — indexing repo-b won't delete repo-a's data. Repos are identified by directory name (or `--name` override). `code_repos` table serves as a registry. `devrag index remove-repo <name>` removes a specific repo.
 - **Incremental indexing**: File content hashes in SQLite skip unchanged files. PR, issue, Jira, Slite, and session sync use stored cursors (sessions key on file mtime).
-- **Search metadata filters**: The `search()` MCP tool and `devrag search` CLI accept optional equality filters that are AND-combined and passed to `VectorStore.query(where=...)`. ChromaStore wraps multi-key dicts into `{"$and": [...]}` automatically; QdrantStore translates each key into a `FieldCondition`. The BM25/FTS5 leg doesn't filter — matching vector hits still dominate via RRF.
-- **VectorStore Protocol**: Adding a new backend means implementing `upsert()`, `query()`, `delete()` and registering in `factory.py`.
+- **Search metadata filters**: The `search()` MCP tool and `devrag search` CLI accept optional equality filters that are AND-combined and passed to `VectorStore.query(where=...)`. QdrantStore translates each key into a `FieldCondition` inside a `Filter(must=[...])`. The BM25/FTS5 leg doesn't filter — matching vector hits still dominate via RRF.
+- **VectorStore Protocol**: `base.py` defines the minimal interface (`upsert()`, `query()`, `get_by_ids()`, `delete()`, `delete_collection()`, `count()`). Only one implementation ships (`QdrantStore`); the protocol is kept because it makes tests mockable and keeps a clean seam if another backend is ever added.
 - **Text truncation safety**: PR chunks are truncated at creation time (`chunk_max_tokens`), and the embedder has a safety-net truncation at the model context limit (`embedding.max_tokens`). Empty/whitespace texts produce zero vectors.
 - **Git-aware file discovery**: `devrag/utils/git.py` respects `.gitignore` and `.devragignore`.
 - GitHub tokens come from env vars (configured via `prs.github_token_env` / `issues.github_token_env`), never stored in config files. Jira credentials similarly use `jira.jira_email_env` / `jira.jira_token_env`. Slite uses `slite.slite_token_env` (default: `SLITE_TOKEN`).
@@ -79,4 +79,4 @@ Nested dataclass hierarchy in `devrag/config.py`. Loaded from `~/.config/devrag/
 
 ## Dependencies
 
-Python 3.12+. Uses `hatchling` build backend. Key deps: `chromadb`, `qdrant-client`, `fastmcp`, `tree-sitter` + `tree-sitter-language-pack`, `sentence-transformers`, `typer`, `httpx`, `gitpython`. Dev: `pytest`, `pytest-asyncio`, `respx`.
+Python 3.12+. Uses `hatchling` build backend. Key deps: `qdrant-client`, `fastmcp`, `tree-sitter` + `tree-sitter-language-pack`, `sentence-transformers`, `typer`, `httpx`, `gitpython`. Dev: `pytest`, `pytest-asyncio`, `respx`.
