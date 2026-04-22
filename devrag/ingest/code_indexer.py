@@ -59,6 +59,8 @@ LANGUAGE_EXTENSIONS: dict[str, str] = {
     ".yaml": "yaml",
     ".yml": "yaml",
     ".json": "json",
+    ".tf": "terraform",
+    ".tfvars": "terraform",
 }
 
 # Node types that represent named entities we want to extract per language.
@@ -111,6 +113,9 @@ ENTITY_NODE_TYPES: dict[str, list[str]] = {
         "method_declaration",
         "type_declaration",
     ],
+    "terraform": [
+        "block",
+    ],
 }
 
 
@@ -139,8 +144,35 @@ def _get_parser(language: str) -> Parser | None:
 # AST helpers
 # ---------------------------------------------------------------------------
 
+def _terraform_block_name(node: Node) -> str | None:
+    """Build a dotted name for a Terraform ``block`` node.
+
+    Terraform blocks have no ``name`` field; the shape is
+    ``identifier string_lit* block_start body block_end``. Examples:
+    ``resource "aws_s3_bucket" "foo"`` → ``resource.aws_s3_bucket.foo``;
+    ``variable "region"`` → ``variable.region``; ``locals`` → ``locals``.
+    """
+    parts: list[str] = []
+    for child in node.children:
+        if child.type == "identifier":
+            parts.append(child.text.decode("utf-8", errors="replace"))
+        elif child.type == "string_lit":
+            # string_lit wraps quoted_template_start, template_literal, quoted_template_end
+            for sub in child.children:
+                if sub.type == "template_literal":
+                    parts.append(sub.text.decode("utf-8", errors="replace"))
+                    break
+        elif child.type in ("block_start", "body", "block_end"):
+            break
+    return ".".join(parts) if parts else None
+
+
 def _get_entity_name(node: Node, language: str) -> str | None:
     """Return the identifier/name for an entity node, or None."""
+    # Terraform blocks: identifier + string_lit labels, no name field
+    if language == "terraform" and node.type == "block":
+        return _terraform_block_name(node)
+
     # Direct name field (works for most languages)
     name_node = node.child_by_field_name("name")
     if name_node is not None:

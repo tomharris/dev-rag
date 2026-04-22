@@ -48,6 +48,44 @@ def test_language_extensions_mapping():
     assert LANGUAGE_EXTENSIONS[".js"] == "javascript"
     assert LANGUAGE_EXTENSIONS[".rs"] == "rust"
     assert LANGUAGE_EXTENSIONS[".go"] == "go"
+    assert LANGUAGE_EXTENSIONS[".tf"] == "terraform"
+    assert LANGUAGE_EXTENSIONS[".tfvars"] == "terraform"
+
+
+def test_extract_chunks_from_terraform_file(tmp_dir):
+    tf = tmp_dir / "main.tf"
+    tf.write_text(
+        'resource "aws_s3_bucket" "foo" {\n'
+        '  bucket = "my-bucket"\n'
+        '}\n'
+        '\n'
+        'variable "region" {\n'
+        '  type    = string\n'
+        '  default = "us-east-1"\n'
+        '}\n'
+        '\n'
+        'module "vpc" {\n'
+        '  source = "./vpc"\n'
+        '}\n'
+        '\n'
+        'locals {\n'
+        '  env = "prod"\n'
+        '}\n'
+    )
+    chunks = extract_chunks_from_file(tf, max_tokens=512)
+    names = [c.metadata["entity_name"] for c in chunks]
+    assert "resource.aws_s3_bucket.foo" in names
+    assert "variable.region" in names
+    assert "module.vpc" in names
+    assert "locals" in names
+    for c in chunks:
+        assert c.metadata["language"] == "terraform"
+    # Each block occupies a distinct line range
+    line_ranges = {c.metadata["line_range"] for c in chunks}
+    assert len(line_ranges) == len(chunks)
+    # Body is preserved in the chunk text
+    resource_chunk = next(c for c in chunks if c.metadata["entity_name"] == "resource.aws_s3_bucket.foo")
+    assert "my-bucket" in resource_chunk.text
 
 
 def test_chunk_ids_are_deterministic(sample_python_file):
