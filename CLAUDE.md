@@ -77,7 +77,7 @@ Nested dataclass hierarchy in `devrag/config.py`. Loaded from `~/.config/devrag/
 - **Text truncation safety**: PR chunks are truncated at creation time (`chunk_max_tokens`), and the embedder has a safety-net truncation at the model context limit (`embedding.max_tokens`). Empty/whitespace texts produce zero vectors.
 - **Git-aware file discovery**: `devrag/utils/git.py` respects `.gitignore` and `.devragignore`.
 - GitHub tokens come from env vars (configured via `prs.github_token_env` / `issues.github_token_env`), never stored in config files. Jira credentials similarly use `jira.jira_email_env` / `jira.jira_token_env`. Slite uses `slite.slite_token_env` (default: `SLITE_TOKEN`).
-- **RAG-first routing**: The `rag-first` skill (`.claude/skills/rag-first/`) auto-triggers on codebase questions. A hookify rule (`.claude/hookify.rag-first-reminder.local.md`) warns if Grep/Glob are used without searching DevRAG first.
+- **RAG-first routing**: The `rag-first` skill (`.claude/skills/rag-first/`) auto-triggers on codebase questions. A per-turn block gate at `.claude/hooks/rag_first_gate.py` hard-denies the *first* `Grep`/`Glob`/`Agent`(`Explore`|`general-purpose`) of a turn unless `mcp__devrag__search` has already run, then releases for the rest of the turn so legitimate fallback still works. The script is tracked, but hook registration lives in `.claude/settings.local.json` (per-user) — see README "Claude Code Integration" for the install snippet.
 
 ## Dependencies
 
