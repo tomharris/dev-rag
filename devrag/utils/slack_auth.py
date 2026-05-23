@@ -41,14 +41,10 @@ def read_d_cookie(browser: str | None = None, domain: str = "slack.com") -> str:
     Raises ``SlackAuthError`` (with the manual-fallback hint) when the cookie is
     absent or can't be decrypted — never returns an empty/garbage value.
     """
-    try:
-        import browser_cookie3
-    except ImportError as exc:  # optional dependency
-        raise SlackAuthError(
-            "browser_cookie3 is not installed. Install it with "
-            "`uv sync --extra slack-auth` (or `pip install 'devrag[slack-auth]'`), "
-            "or use the manual extraction steps in the README."
-        ) from exc
+    # Lazy import: browser_cookie3 pulls in slow keyring/crypto libs, so we only
+    # pay that cost when auth actually runs. It's a core dependency, so the
+    # import itself won't fail.
+    import browser_cookie3
 
     loaders = {
         "chrome": getattr(browser_cookie3, "chrome", None),

@@ -4,6 +4,7 @@ version = "0.2.0"
 description = "Local RAG system for developer teams"
 requires-python = ">=3.12,<3.14"
 dependencies = [
+    "browser-cookie3>=0.19.1",
     "fastembed>=0.4.0",
     "fastmcp>=3.0.0",
     "gitpython>=3.1.0",
@@ -25,10 +26,6 @@ dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.24.0",
     "respx>=0.22.0",
-]
-# Reads the Slack `d` cookie from the local browser profile for `devrag auth slack`.
-slack-auth = [
-    "browser-cookie3>=0.19.1",
 ]
 
 [build-system]

@@ -140,7 +140,6 @@ no admin approval, and it indexes exactly what you can already see.
 Slack in your browser):
 
 ```bash
-uv sync --extra slack-auth                          # one-time: installs the cookie reader
 eval "$(devrag auth slack --workspace mycorp)"      # mycorp = the <x> in https://<x>.slack.com
 devrag index slack
 ```
