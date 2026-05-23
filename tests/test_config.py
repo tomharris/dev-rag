@@ -60,6 +60,16 @@ def test_default_config_has_documents_section():
     assert config.documents.chunk_overlap_tokens == 50
 
 
+def test_default_config_has_slack_section():
+    config = DevragConfig()
+    assert config.slack.slack_token_env == "SLACK_XOXC_TOKEN"
+    assert config.slack.slack_cookie_env == "SLACK_XOXD_COOKIE"
+    assert config.slack.channel_ids == []
+    assert config.slack.gap_minutes == 30
+    assert config.slack.backfill_days == 90
+    assert config.slack.chunk_max_tokens == 512
+
+
 def test_load_config_user_dir_fallback(tmp_dir, monkeypatch):
     user_config_dir = tmp_dir / "user_config"
     user_config_dir.mkdir()

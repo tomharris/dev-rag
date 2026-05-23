@@ -13,6 +13,7 @@ from devrag.ingest.issue_indexer import IssueIndexer
 from devrag.ingest.jira_indexer import JiraIndexer
 from devrag.ingest.pr_indexer import PRIndexer
 from devrag.ingest.session_indexer import SessionsIndexer
+from devrag.ingest.slack_indexer import SlackIndexer
 from devrag.ingest.slite_indexer import SliteIndexer
 from devrag.ingest.sparse_encoder import BM25SparseEncoder
 from devrag.retrieve.hybrid_search import HybridSearch, search_rank_dedupe
@@ -21,9 +22,10 @@ from devrag.retrieve.reranker import Reranker
 from devrag.stores.qdrant_store import QdrantStore
 from devrag.stores.metadata_db import MetadataDB
 from devrag.utils.git import infer_repo
-from devrag.utils.formatters import format_doc_index_stats, format_index_stats, format_issue_sync_stats, format_jira_sync_stats, format_pr_sync_stats, format_search_results, format_session_sync_stats, format_slite_sync_stats
+from devrag.utils.formatters import format_doc_index_stats, format_index_stats, format_issue_sync_stats, format_jira_sync_stats, format_pr_sync_stats, format_search_results, format_session_sync_stats, format_slack_sync_stats, format_slite_sync_stats
 from devrag.utils.github import GitHubClient
 from devrag.utils.jira_client import JiraClient
+from devrag.utils.slack_client import SlackClient
 from devrag.utils.slite_client import SliteClient
 
 mcp = FastMCP("DevRAG")
@@ -106,6 +108,7 @@ def search(
     ticket_key: str = "",
     page_id: str = "",
     session_id: str = "",
+    channel_id: str = "",
     file_path: str = "",
 ) -> str:
     """Search code, PRs, issues, and docs using hybrid retrieval.
@@ -114,8 +117,8 @@ def search(
         query: The search query.
         scope: What to search. "all" auto-routes by intent,
                "code" searches code only, "prs" searches PRs only,
-               "issues" searches issues only, "jira", "slite", "docs",
-               "sessions" for Claude Code session logs.
+               "issues" searches issues only, "jira", "slite", "slack",
+               "docs", "sessions" for Claude Code session logs.
         top_k: Number of results to return (0 = use configured default).
         repo: Optional repo name to filter results (empty = all repos).
         chunk_type: Optional filter by chunk type. Known values:
@@ -128,6 +131,7 @@ def search(
         ticket_key: Optional Jira ticket key (e.g. "PROJ-123").
         page_id: Optional Slite page id.
         session_id: Optional Claude Code session UUID.
+        channel_id: Optional Slack channel id.
         file_path: Optional exact file path match.
 
     All filter params are AND-combined against vector-store metadata
@@ -152,6 +156,8 @@ def search(
         where["page_id"] = page_id
     if session_id:
         where["session_id"] = session_id
+    if channel_id:
+        where["channel_id"] = channel_id
     if file_path:
         where["file_path"] = file_path
     where = where or None
@@ -340,6 +346,44 @@ def sync_slite(since_days: int = 90) -> str:
 
 
 @mcp.tool
+def sync_slack(since_days: int = 90) -> str:
+    """Sync Slack conversations using browser session credentials (no app required).
+
+    Authenticates as the logged-in user with an xoxc token + xoxd cookie (the
+    same pair the web client uses), so no Slack App or workspace install is
+    needed. Indexes public channels you belong to by default, or only the
+    channels in `slack.channel_ids` when that allowlist is set. Threads become
+    one chunk; non-threaded messages are grouped into time-window chunks.
+    Cursor-based per channel to avoid re-fetching.
+
+    Requires the SLACK_XOXC_TOKEN and SLACK_XOXD_COOKIE environment variables
+    (names configurable via `slack.slack_token_env` / `slack.slack_cookie_env`).
+    """
+    config = _get_config()
+    token = os.environ.get(config.slack.slack_token_env)
+    cookie = os.environ.get(config.slack.slack_cookie_env)
+    if not token or not cookie:
+        return (
+            f"Error: set {config.slack.slack_token_env} (xoxc token) and "
+            f"{config.slack.slack_cookie_env} (xoxd cookie) environment variables."
+        )
+    slack = SlackClient(token=token, cookie=cookie)
+    indexer = SlackIndexer(
+        vector_store=_get_vector_store(),
+        metadata_db=_get_metadata_db(),
+        embedder=_get_embedder(),
+        sparse_encoder=_get_sparse_encoder(),
+        slack_client=slack,
+        chunk_max_tokens=config.slack.chunk_max_tokens,
+        chunk_overlap_tokens=config.slack.chunk_overlap_tokens,
+        channel_ids=config.slack.channel_ids,
+        gap_minutes=config.slack.gap_minutes,
+    )
+    stats = indexer.sync(since_days=since_days)
+    return format_slack_sync_stats(stats)
+
+
+@mcp.tool
 def sync_sessions(since_days: int = 0) -> str:
     """Sync local Claude Code JSONL session logs.
 
@@ -380,6 +424,7 @@ def status() -> str:
     jira_desc_count = store.count("jira_descriptions")
     jira_disc_count = store.count("jira_discussions")
     slite_count = store.count("slite_pages")
+    slack_count = store.count("slack_messages")
     doc_count = store.count("documents")
     session_count = store.count("session_logs")
     indexed_files = meta.get_all_indexed_files()
@@ -401,6 +446,7 @@ def status() -> str:
         f"Jira description chunks: {jira_desc_count}",
         f"Jira discussion chunks: {jira_disc_count}",
         f"Slite page chunks: {slite_count}",
+        f"Slack message chunks: {slack_count}",
         f"Document chunks: {doc_count}",
         f"Session log chunks: {session_count}",
     ]

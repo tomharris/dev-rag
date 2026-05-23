@@ -186,6 +186,39 @@ def test_delete_chunks_for_pr(tmp_dir):
     assert db.get_chunks_for_pr("acme/backend", 100) == []
 
 
+def test_slack_sync_cursor_set_and_get(tmp_dir):
+    db = MetadataDB(str(tmp_dir / "meta.db"))
+    db.set_slack_sync_cursor("C123", "1700000000.000100")
+    assert db.get_slack_sync_cursor("C123") == "1700000000.000100"
+    assert db.get_slack_sync_cursor("C999") is None
+
+
+def test_slack_sync_cursor_update(tmp_dir):
+    db = MetadataDB(str(tmp_dir / "meta.db"))
+    db.set_slack_sync_cursor("C123", "1700000000.000100")
+    db.set_slack_sync_cursor("C123", "1700000500.000200")
+    assert db.get_slack_sync_cursor("C123") == "1700000500.000200"
+
+
+def test_slack_chunk_source_mapping(tmp_dir):
+    db = MetadataDB(str(tmp_dir / "meta.db"))
+    db.set_slack_chunk_source("s1", "C123")
+    db.set_slack_chunk_source("s2", "C123")
+    db.set_slack_chunk_source("s3", "C456")
+    assert set(db.get_chunks_for_slack_channel("C123")) == {"s1", "s2"}
+    assert db.get_chunks_for_slack_channel("C456") == ["s3"]
+
+
+def test_delete_slack_chunk_sources(tmp_dir):
+    db = MetadataDB(str(tmp_dir / "meta.db"))
+    db.set_slack_chunk_source("s1", "C123")
+    db.set_slack_chunk_source("s2", "C123")
+    db.delete_slack_chunk_sources(["s1"])
+    assert db.get_chunks_for_slack_channel("C123") == ["s2"]
+    db.delete_slack_chunk_sources([])  # no-op, must not error
+    assert db.get_chunks_for_slack_channel("C123") == ["s2"]
+
+
 def test_reset_all(tmp_dir):
     db = MetadataDB(str(tmp_dir / "meta.db"))
     # Populate various tables
@@ -196,6 +229,8 @@ def test_reset_all(tmp_dir):
     db.set_pr_chunk_source("pr_c1", "acme/backend", 42)
     db.set_issue_sync_cursor("acme/backend", "2025-01-01")
     db.set_issue_chunk_source("issue_c1", "acme/backend", 99)
+    db.set_slack_sync_cursor("C123", "1700000000.000100")
+    db.set_slack_chunk_source("slack_c1", "C123")
 
     db.reset_all()
 
@@ -207,6 +242,8 @@ def test_reset_all(tmp_dir):
     assert db.get_chunks_for_pr("acme/backend", 42) == []
     assert db.get_issue_sync_cursor("acme/backend") is None
     assert db.get_chunks_for_issue("acme/backend", 99) == []
+    assert db.get_slack_sync_cursor("C123") is None
+    assert db.get_chunks_for_slack_channel("C123") == []
 
 
 def test_reset_all_preserves_query_metrics(tmp_dir):

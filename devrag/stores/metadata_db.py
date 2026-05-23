@@ -157,6 +157,19 @@ class MetadataDB:
             CREATE INDEX IF NOT EXISTS idx_slite_chunk_sources_workspace_page
                 ON slite_chunk_sources(workspace_id, page_id);
 
+            CREATE TABLE IF NOT EXISTS slack_sync_cursors (
+                channel_id TEXT PRIMARY KEY,
+                last_synced TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS slack_chunk_sources (
+                chunk_id TEXT PRIMARY KEY,
+                channel_id TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_slack_chunk_sources_channel
+                ON slack_chunk_sources(channel_id);
+
             CREATE TABLE IF NOT EXISTS session_sync_cursors (
                 cursor_key TEXT PRIMARY KEY,
                 last_synced TEXT NOT NULL
@@ -217,6 +230,8 @@ class MetadataDB:
             DELETE FROM jira_chunk_sources;
             DELETE FROM slite_sync_cursors;
             DELETE FROM slite_chunk_sources;
+            DELETE FROM slack_sync_cursors;
+            DELETE FROM slack_chunk_sources;
             DELETE FROM session_sync_cursors;
             DELETE FROM session_chunk_sources;
         """)
@@ -414,6 +429,42 @@ class MetadataDB:
                 chunk_ids,
             )
             self._conn.commit()
+
+    def get_slack_sync_cursor(self, channel_id: str) -> str | None:
+        row = self._conn.execute(
+            "SELECT last_synced FROM slack_sync_cursors WHERE channel_id = ?", (channel_id,)
+        ).fetchone()
+        return row[0] if row else None
+
+    def set_slack_sync_cursor(self, channel_id: str, last_synced: str) -> None:
+        self._conn.execute(
+            "INSERT OR REPLACE INTO slack_sync_cursors (channel_id, last_synced) VALUES (?, ?)",
+            (channel_id, last_synced),
+        )
+        self._conn.commit()
+
+    def set_slack_chunk_source(self, chunk_id: str, channel_id: str) -> None:
+        self._conn.execute(
+            "INSERT OR REPLACE INTO slack_chunk_sources (chunk_id, channel_id) VALUES (?, ?)",
+            (chunk_id, channel_id),
+        )
+        self._conn.commit()
+
+    def get_chunks_for_slack_channel(self, channel_id: str) -> list[str]:
+        rows = self._conn.execute(
+            "SELECT chunk_id FROM slack_chunk_sources WHERE channel_id = ?", (channel_id,)
+        ).fetchall()
+        return [r[0] for r in rows]
+
+    def delete_slack_chunk_sources(self, chunk_ids: list[str]) -> None:
+        if not chunk_ids:
+            return
+        placeholders = ",".join("?" for _ in chunk_ids)
+        self._conn.execute(
+            f"DELETE FROM slack_chunk_sources WHERE chunk_id IN ({placeholders})",
+            chunk_ids,
+        )
+        self._conn.commit()
 
     def get_session_sync_cursor(self, cursor_key: str) -> str | None:
         row = self._conn.execute(
