@@ -95,6 +95,7 @@ class SliteConfig:
 class SlackConfig:
     slack_token_env: str = "SLACK_XOXC_TOKEN"   # browser session token (xoxc-…)
     slack_cookie_env: str = "SLACK_XOXD_COOKIE"  # browser `d` cookie (xoxd-…)
+    workspace: str = ""            # workspace subdomain (the <x> in https://<x>.slack.com); used by `devrag auth slack`
     channel_ids: list[str] = field(default_factory=list)  # empty = all public; set = allowlist
     gap_minutes: int = 30          # time-gap threshold that splits non-threaded messages into windows
     backfill_days: int = 90

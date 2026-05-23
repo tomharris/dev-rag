@@ -26,6 +26,10 @@ dev = [
     "pytest-asyncio>=0.24.0",
     "respx>=0.22.0",
 ]
+# Reads the Slack `d` cookie from the local browser profile for `devrag auth slack`.
+slack-auth = [
+    "browser-cookie3>=0.19.1",
+]
 
 [build-system]
 requires = ["hatchling"]
