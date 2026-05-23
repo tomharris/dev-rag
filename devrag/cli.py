@@ -36,7 +36,10 @@ def _get_search_components():
     embedder = _make_embedder(config)
     sparse_encoder = _make_sparse_encoder(config)
     hybrid = HybridSearch(store, embedder, sparse_encoder)
-    reranker = Reranker(model_name=config.retrieval.reranker_model) if config.retrieval.rerank else None
+    reranker = Reranker(
+        model_name=config.retrieval.reranker_model,
+        max_length=config.retrieval.reranker_max_length,
+    ) if config.retrieval.rerank else None
     return hybrid, reranker, config
 
 
@@ -55,11 +58,13 @@ def search(
     file_path: str = typer.Option("", "--file-path", help="Exact file path match"),
 ):
     """Search code, PRs, issues, and docs."""
-    from devrag.retrieve.hybrid_search import deduplicate_results
+    from devrag.retrieve.hybrid_search import search_rank_dedupe
     from devrag.retrieve.query_router import QueryRouter
+    from devrag.stores.metadata_db import MetadataDB
     from devrag.utils.formatters import format_search_results
+    from devrag.utils.git import infer_repo
     hybrid, reranker, config = _get_search_components()
-    top_k = top_k if top_k > 0 else config.retrieval.final_k
+    final_k = top_k if top_k > 0 else config.retrieval.final_k
     router = QueryRouter()
     collections = router.route(query, scope=scope)
     where: dict = {}
@@ -79,12 +84,11 @@ def search(
         where["session_id"] = session_id
     if file_path:
         where["file_path"] = file_path
-    candidates = hybrid.search(query, top_k=config.retrieval.top_k, collections=collections, where=where or None)
-    if reranker and candidates:
-        results = reranker.rerank(query, candidates, top_k=top_k)
-    else:
-        results = candidates[:top_k]
-    results = deduplicate_results(results, max_per_source=config.retrieval.max_per_source)
+    prefer_repo = ""
+    if not repo and config.retrieval.repo_boost:
+        db_dir = Path("~/.local/share/devrag").expanduser()
+        prefer_repo = infer_repo(Path.cwd(), MetadataDB(str(db_dir / "metadata.db")).get_all_repos())
+    results = search_rank_dedupe(hybrid, reranker, query, collections, where or None, config, final_k, prefer_repo)
     typer.echo(format_search_results(results))
 
 

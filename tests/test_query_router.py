@@ -63,8 +63,20 @@ def test_docs_query_spec():
     assert "documents" in router.route("what does the design spec say about caching")
 
 
+def test_docs_query_architecture_includes_code():
+    router = QueryRouter()
+    collections = router.route("describe the system architecture")
+    assert "documents" in collections
+    assert "code_chunks" in collections
+
+
 def test_docs_only_scope():
     assert QueryRouter().route("anything", scope="docs") == ["documents"]
+
+
+def test_docs_only_scope_stays_narrow():
+    """Explicit docs scope must not be widened to include code."""
+    assert QueryRouter().route("describe the system architecture", scope="docs") == ["documents"]
 
 
 def test_ambiguous_query_includes_docs():

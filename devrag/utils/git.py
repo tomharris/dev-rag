@@ -5,6 +5,24 @@ import subprocess
 from pathlib import Path
 
 
+def infer_repo(cwd: Path, repos: list[tuple[str, str]]) -> str:
+    """Return the registered repo name whose path contains ``cwd``.
+
+    ``repos`` is a list of ``(name, path)`` pairs (see ``MetadataDB.get_all_repos``).
+    When ``cwd`` sits inside nested repos, the most specific (deepest) path wins.
+    Returns ``""`` when no registered repo contains ``cwd``.
+    """
+    cwd = cwd.resolve()
+    best_name, best_depth = "", -1
+    for name, path in repos:
+        repo_path = Path(path).resolve()
+        if cwd == repo_path or repo_path in cwd.parents:
+            depth = len(repo_path.parts)
+            if depth > best_depth:
+                best_name, best_depth = name, depth
+    return best_name
+
+
 def discover_files(
     repo_path: Path,
     exclude_patterns: list[str],

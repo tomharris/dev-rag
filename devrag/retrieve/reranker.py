@@ -9,14 +9,14 @@ from devrag.types import SearchResult
 
 
 class Reranker:
-    def __init__(self, model_name: str = "cross-encoder/ms-marco-MiniLM-L-6-v2") -> None:
+    def __init__(self, model_name: str = "cross-encoder/ms-marco-MiniLM-L-6-v2", max_length: int = 512) -> None:
         prev_tf = tf_logging.get_verbosity()
         hf_logger = logging.getLogger("huggingface_hub.utils._http")
         prev_hf = hf_logger.level
         tf_logging.set_verbosity_error()
         hf_logger.setLevel(logging.ERROR)
         try:
-            self._model = CrossEncoder(model_name)
+            self._model = CrossEncoder(model_name, max_length=max_length)
         finally:
             tf_logging.set_verbosity(prev_tf)
             hf_logger.setLevel(prev_hf)

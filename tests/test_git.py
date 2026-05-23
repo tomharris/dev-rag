@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from devrag.utils.git import discover_files
+from devrag.utils.git import discover_files, infer_repo
 
 
 @pytest.fixture
@@ -62,3 +62,18 @@ def test_discover_files_respects_devragignore(git_repo):
     assert "src/utils.py" in rel_paths
     assert "README.md" not in rel_paths
     assert "src/data.min.js" not in rel_paths
+
+
+def test_infer_repo_matches_cwd_under_repo():
+    repos = [("repo-a", "/home/u/Projects/repo-a"), ("repo-b", "/home/u/Projects/repo-b")]
+    assert infer_repo(Path("/home/u/Projects/repo-b/src/app"), repos) == "repo-b"
+
+
+def test_infer_repo_returns_empty_when_no_match():
+    repos = [("repo-a", "/home/u/Projects/repo-a")]
+    assert infer_repo(Path("/tmp/elsewhere"), repos) == ""
+
+
+def test_infer_repo_prefers_most_specific_nested_repo():
+    repos = [("outer", "/home/u/Projects"), ("inner", "/home/u/Projects/inner")]
+    assert infer_repo(Path("/home/u/Projects/inner/src"), repos) == "inner"
