@@ -87,6 +87,18 @@ class SliteSyncStats:
 
 
 @dataclass
+class SlackSyncStats:
+    """Statistics from a Slack conversation sync run."""
+    channels_scanned: int = 0
+    channels_skipped: int = 0
+    messages_fetched: int = 0
+    threads_indexed: int = 0
+    windows_indexed: int = 0
+    chunks_created: int = 0
+    channels_errored: int = 0
+
+
+@dataclass
 class SessionSyncStats:
     """Statistics from a Claude Code session-log sync run."""
     files_scanned: int = 0

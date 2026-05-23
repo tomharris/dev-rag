@@ -1,12 +1,13 @@
 from __future__ import annotations
 import re
 
-ALL_COLLECTIONS = ["code_chunks", "pr_diffs", "pr_discussions", "issue_descriptions", "issue_discussions", "jira_descriptions", "jira_discussions", "slite_pages", "documents", "session_logs"]
+ALL_COLLECTIONS = ["code_chunks", "pr_diffs", "pr_discussions", "issue_descriptions", "issue_discussions", "jira_descriptions", "jira_discussions", "slite_pages", "slack_messages", "documents", "session_logs"]
 CODE_COLLECTIONS = ["code_chunks"]
 PR_COLLECTIONS = ["pr_diffs", "pr_discussions"]
 ISSUE_COLLECTIONS = ["issue_descriptions", "issue_discussions"]
 JIRA_COLLECTIONS = ["jira_descriptions", "jira_discussions"]
 SLITE_COLLECTIONS = ["slite_pages"]
+SLACK_COLLECTIONS = ["slack_messages"]
 DOC_COLLECTIONS = ["documents"]
 SESSION_COLLECTIONS = ["session_logs"]
 
@@ -30,6 +31,11 @@ _JIRA_PATTERNS = [
 
 _SLITE_PATTERNS = [
     r"\bslite\b", r"\bwiki\b", r"\bknowledge\s+base\b", r"\binternal\s+doc\b",
+]
+
+_SLACK_PATTERNS = [
+    r"\bslack\b", r"\bdirect\s+message\b", r"\bdm(?:ed|s)?\b",
+    r"#[a-z0-9][a-z0-9_-]*",  # #channel mentions
 ]
 
 _SESSION_PATTERNS = [
@@ -72,6 +78,8 @@ class QueryRouter:
             return JIRA_COLLECTIONS
         if scope == "slite":
             return SLITE_COLLECTIONS
+        if scope == "slack":
+            return SLACK_COLLECTIONS
         if scope == "docs":
             return DOC_COLLECTIONS
         if scope == "sessions":
@@ -80,6 +88,9 @@ class QueryRouter:
         for pattern in _SESSION_PATTERNS:
             if re.search(pattern, q):
                 return SESSION_COLLECTIONS
+        for pattern in _SLACK_PATTERNS:
+            if re.search(pattern, q):
+                return SLACK_COLLECTIONS
         for pattern in _SLITE_PATTERNS:
             if re.search(pattern, q):
                 return SLITE_COLLECTIONS + DOC_COLLECTIONS

@@ -92,6 +92,17 @@ class SliteConfig:
 
 
 @dataclass
+class SlackConfig:
+    slack_token_env: str = "SLACK_XOXC_TOKEN"   # browser session token (xoxc-…)
+    slack_cookie_env: str = "SLACK_XOXD_COOKIE"  # browser `d` cookie (xoxd-…)
+    channel_ids: list[str] = field(default_factory=list)  # empty = all public; set = allowlist
+    gap_minutes: int = 30          # time-gap threshold that splits non-threaded messages into windows
+    backfill_days: int = 90
+    chunk_max_tokens: int = 512
+    chunk_overlap_tokens: int = 50
+
+
+@dataclass
 class DocumentsConfig:
     glob_patterns: list[str] = field(default_factory=lambda: [
         "**/*.md", "**/*.mdx", "**/*.txt", "**/*.rst", "**/*.html", "**/*.adoc",
@@ -118,6 +129,7 @@ class DevragConfig:
     issues: IssuesConfig = field(default_factory=IssuesConfig)
     jira: JiraConfig = field(default_factory=JiraConfig)
     slite: SliteConfig = field(default_factory=SliteConfig)
+    slack: SlackConfig = field(default_factory=SlackConfig)
     documents: DocumentsConfig = field(default_factory=DocumentsConfig)
     sessions: SessionsConfig = field(default_factory=SessionsConfig)
 

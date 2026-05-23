@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from devrag.types import DocIndexStats, IndexStats, IssueSyncStats, JiraSyncStats, PRSyncStats, SearchResult, SessionSyncStats, SliteSyncStats
+from devrag.types import DocIndexStats, IndexStats, IssueSyncStats, JiraSyncStats, PRSyncStats, SearchResult, SessionSyncStats, SlackSyncStats, SliteSyncStats
 
 
 def format_search_results(results: list[SearchResult]) -> str:
@@ -53,6 +53,23 @@ def format_search_results(results: list[SearchResult]) -> str:
             lines.append(header)
             if timestamp:
                 lines.append(f"*{timestamp}*")
+            lines.append("```")
+            text_lines = r.text.strip().split("\n")
+            preview = "\n".join(text_lines[:50])
+            if len(text_lines) > 50:
+                preview += "\n# ... (truncated)"
+            lines.append(preview)
+            lines.append("```")
+            lines.append("")
+        elif chunk_type in ("slack_thread", "slack_window"):
+            channel_name = r.metadata.get("channel_name", "?")
+            participants = r.metadata.get("participants", [])
+            kind = "thread" if chunk_type == "slack_thread" else "conversation"
+            header = f"### {i}. [Slack #{channel_name}] {kind}"
+            if participants:
+                names = ", ".join(participants) if isinstance(participants, list) else str(participants)
+                header += f" ({names})"
+            lines.append(header)
             lines.append("```")
             text_lines = r.text.strip().split("\n")
             preview = "\n".join(text_lines[:50])
@@ -179,6 +196,18 @@ def format_slite_sync_stats(stats: SliteSyncStats) -> str:
         parts.append(f"Skipped {stats.pages_skipped} pages")
     if stats.pages_errored:
         parts.append(f"Errored {stats.pages_errored} pages")
+    return ". ".join(parts) + "."
+
+
+def format_slack_sync_stats(stats: SlackSyncStats) -> str:
+    parts = [
+        f"Scanned {stats.channels_scanned} Slack channels",
+        f"Indexed {stats.threads_indexed} threads + {stats.windows_indexed} windows ({stats.chunks_created} chunks)",
+    ]
+    if stats.channels_skipped:
+        parts.append(f"Skipped {stats.channels_skipped} channels (no new messages)")
+    if stats.channels_errored:
+        parts.append(f"Errored {stats.channels_errored} channels")
     return ". ".join(parts) + "."
 
 

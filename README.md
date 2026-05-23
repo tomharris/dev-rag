@@ -1,6 +1,6 @@
 # DevRAG
 
-A local RAG system for developer teams that ingests **code**, **GitHub PRs**, **GitHub issues**, **Jira Cloud tickets**, **Slite pages**, **documents**, and **Claude Code session logs** — surfaced through Claude Code slash commands and a standalone CLI. Designed for zero-friction adoption: index your repo, search immediately.
+A local RAG system for developer teams that ingests **code**, **GitHub PRs**, **GitHub issues**, **Jira Cloud tickets**, **Slite pages**, **Slack conversations**, **documents**, and **Claude Code session logs** — surfaced through Claude Code slash commands and a standalone CLI. Designed for zero-friction adoption: index your repo, search immediately.
 
 ## Why DevRAG?
 
@@ -68,6 +68,7 @@ devrag search "query" --scope code         # Code only
 devrag search "query" --scope prs          # PR history only
 devrag search "query" --scope issues       # Issues only
 devrag search "query" --scope slite        # Slite pages only
+devrag search "query" --scope slack        # Slack conversations only
 devrag search "query" --scope docs         # Documents only
 devrag search "query" --scope sessions     # Claude Code session logs only
 devrag search "query" --top-k 10           # More results
@@ -77,6 +78,7 @@ devrag search "auth" --repo myrepo --chunk-type diff
 devrag search "bug" --pr-number 1234
 devrag search "refund flow" --ticket-key PROJ-123
 devrag search "deploy" --session-id <uuid>
+devrag search "incident" --channel C0123ABCD   # Slack channel id
 ```
 
 The query router automatically classifies intent and targets relevant collections. "Why did we switch to Redis?" routes to PR history; "is there a bug with login?" routes to issues and Jira tickets; "what sprint is auth in?" routes to Jira; "what does our wiki say about deploys?" routes to Slite pages and documents; "how does the auth middleware work?" routes to code.
@@ -115,11 +117,47 @@ export SLITE_TOKEN=your-api-token
 devrag index slite                         # Last 90 days, all channels
 devrag index slite --since 30d             # Custom lookback
 
+# Slack conversations — NO Slack App required (uses your browser session)
+export SLACK_XOXC_TOKEN=xoxc-...           # web-client token (see "Slack without an app")
+export SLACK_XOXD_COOKIE=xoxd-...          # the `d` cookie value
+devrag index slack                         # Public channels you're in, last 90 days
+devrag index slack --since 30d             # Custom first-sync lookback
+
 # Claude Code session logs (local JSONL, incremental via file mtime)
 devrag index sessions                      # Incremental from cursor (60d first run)
 devrag index sessions --since 30d          # Override cursor
 devrag index sessions --logs-dir /custom/path
 ```
+
+#### Slack without an app
+
+Most Slack integrations require creating a Slack App and having a workspace admin
+install it with OAuth scopes. DevRAG skips that entirely: it authenticates as **you**,
+the logged-in user, using the same credentials your browser already holds — so no app,
+no admin approval, and it indexes exactly what you can already see.
+
+**Extract the two credentials from your browser** (while logged in to Slack on the web):
+
+1. Open Slack in your browser → DevTools (F12) → **Console**.
+2. Token (`xoxc-…`): run
+   `JSON.parse(localStorage.localConfig_v2).teams[Object.keys(JSON.parse(localStorage.localConfig_v2).teams)[0]].token`
+   (or find `xoxc-` under Application → Local Storage).
+3. Cookie (`xoxd-…`): DevTools → **Application → Cookies → `https://app.slack.com`** → copy
+   the value of the cookie named **`d`** (URL-decode `%2F`→`/` etc. if needed).
+4. `export SLACK_XOXC_TOKEN=xoxc-…` and `export SLACK_XOXD_COOKIE=xoxd-…`, then
+   `devrag index slack`.
+
+**Scope:** public channels you belong to by default. To index only specific channels
+(of any type), set an allowlist in `.devrag.yaml` under `slack.channel_ids`. Threads are
+indexed as single chunks; loose channel chatter is grouped into time-window chunks.
+
+> ⚠️ **Caveats.** These are personal session credentials, not an official API token, and
+> using Slack's internal web API is against a strict reading of Slack's Terms of Service —
+> use at your own risk on workspaces where you have permission to read the content. The
+> token/cookie **expire** when your browser session rotates or you log out; when that
+> happens `devrag index slack` fails with a clear "re-extract from browser" error rather
+> than silently indexing nothing. Credentials are read from env vars only and never stored
+> in config files.
 
 Code indexing is **incremental** — file content hashes are tracked in SQLite, so unchanged files are skipped on re-index.
 
@@ -128,7 +166,7 @@ Code indexing is **incremental** — file content hashes are tracked in SQLite, 
 ```bash
 devrag status                              # Show index stats
 devrag serve                               # Start MCP server for Claude Code
-devrag reindex --all                       # Clear all indexes and re-embed code repos (re-sync PRs/issues/Jira/Slite manually)
+devrag reindex --all                       # Clear all indexes and re-embed code repos (re-sync PRs/issues/Jira/Slite/Slack manually)
 devrag reindex --name my_project           # Re-index a single repo (preserves other repos and external sources)
 devrag config set embedding.model nomic-embed-text
 devrag config get vector_store.backend
@@ -266,6 +304,7 @@ Restart your Claude Code session after editing so the hooks register.
 | `jira_descriptions` | Jira indexer | Jira ticket summaries and descriptions |
 | `jira_discussions` | Jira indexer | Jira ticket comments |
 | `slite_pages` | Slite indexer | Slite page sections (markdown) |
+| `slack_messages` | Slack indexer | Slack threads and time-window conversations |
 | `documents` | Doc indexer | Markdown/text sections |
 | `session_logs` | Sessions indexer | Claude Code user↔assistant exchanges from local JSONL |
 
@@ -332,6 +371,15 @@ jira:
 slite:
   slite_token_env: SLITE_TOKEN    # Env var for API token
   channel_ids: []                 # Filter to specific channels (empty = all)
+  backfill_days: 90
+  chunk_max_tokens: 512
+  chunk_overlap_tokens: 50
+
+slack:
+  slack_token_env: SLACK_XOXC_TOKEN   # Env var for the xoxc web-client token
+  slack_cookie_env: SLACK_XOXD_COOKIE # Env var for the xoxd `d` cookie
+  channel_ids: []                     # Allowlist of channel ids (empty = all public channels you're in)
+  gap_minutes: 30                     # Quiet gap that starts a new conversation window
   backfill_days: 90
   chunk_max_tokens: 512
   chunk_overlap_tokens: 50

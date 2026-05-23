@@ -105,3 +105,22 @@ def test_all_collections_include_issues():
     from devrag.retrieve.query_router import ALL_COLLECTIONS
     assert "issue_descriptions" in ALL_COLLECTIONS
     assert "issue_discussions" in ALL_COLLECTIONS
+
+
+def test_slack_only_scope():
+    assert QueryRouter().route("anything", scope="slack") == ["slack_messages"]
+
+
+def test_slack_query_keyword():
+    router = QueryRouter()
+    assert "slack_messages" in router.route("what was discussed in slack about the deploy")
+
+
+def test_all_collections_include_slack():
+    from devrag.retrieve.query_router import ALL_COLLECTIONS
+    assert "slack_messages" in ALL_COLLECTIONS
+
+
+def test_session_discussed_still_routes_to_sessions():
+    """The slack intent must not steal the existing 'we discussed' session routing."""
+    assert QueryRouter().route("what did we discuss last session") == ["session_logs"]

@@ -46,7 +46,7 @@ def _get_search_components():
 @app.command()
 def search(
     query: str = typer.Argument(..., help="Search query text"),
-    scope: str = typer.Option("all", help="Scope: all, code, prs, issues, jira, slite, docs, sessions"),
+    scope: str = typer.Option("all", help="Scope: all, code, prs, issues, jira, slite, slack, docs, sessions"),
     top_k: int = typer.Option(0, help="Number of results (0 = use configured default)"),
     repo: str = typer.Option("", help="Filter by repo name"),
     chunk_type: str = typer.Option("", "--chunk-type", help="Filter by chunk_type (e.g. diff, description, comment, slite_page, document, session_exchange)"),
@@ -55,6 +55,7 @@ def search(
     ticket_key: str = typer.Option("", "--ticket-key", help="Filter by Jira ticket key"),
     page_id: str = typer.Option("", "--page-id", help="Filter by Slite page id"),
     session_id: str = typer.Option("", "--session-id", help="Filter by Claude Code session UUID"),
+    channel_id: str = typer.Option("", "--channel", help="Filter by Slack channel id"),
     file_path: str = typer.Option("", "--file-path", help="Exact file path match"),
 ):
     """Search code, PRs, issues, and docs."""
@@ -82,6 +83,8 @@ def search(
         where["page_id"] = page_id
     if session_id:
         where["session_id"] = session_id
+    if channel_id:
+        where["channel_id"] = channel_id
     if file_path:
         where["file_path"] = file_path
     prefer_repo = ""
@@ -290,6 +293,48 @@ def index_slite(
     typer.echo(format_slite_sync_stats(stats))
 
 
+@index_app.command("slack")
+def index_slack(
+    since: str = typer.Option("90d", help="Lookback period for first sync (e.g. 90d)"),
+):
+    """Sync Slack conversations using browser session credentials (no app required).
+
+    Requires the xoxc token and xoxd cookie in the configured env vars
+    (default SLACK_XOXC_TOKEN / SLACK_XOXD_COOKIE).
+    """
+    from devrag.config import load_config
+    from devrag.ingest.slack_indexer import SlackIndexer
+    from devrag.stores.qdrant_store import QdrantStore
+    from devrag.stores.metadata_db import MetadataDB
+    from devrag.utils.formatters import format_slack_sync_stats
+    from devrag.utils.slack_client import SlackClient
+    config = load_config(project_dir=Path.cwd())
+    token = os.environ.get(config.slack.slack_token_env)
+    cookie = os.environ.get(config.slack.slack_cookie_env)
+    if not token or not cookie:
+        typer.echo(
+            f"Error: set {config.slack.slack_token_env} (xoxc token) and "
+            f"{config.slack.slack_cookie_env} (xoxd cookie) environment variables.",
+            err=True,
+        )
+        raise typer.Exit(1)
+    store = QdrantStore.from_config(config)
+    db_dir = Path("~/.local/share/devrag").expanduser()
+    db_dir.mkdir(parents=True, exist_ok=True)
+    meta = MetadataDB(str(db_dir / "metadata.db"))
+    embedder = _make_embedder(config)
+    sparse_encoder = _make_sparse_encoder(config)
+    days = int(since.rstrip("d"))
+    slack = SlackClient(token=token, cookie=cookie)
+    indexer = SlackIndexer(store, meta, embedder, sparse_encoder, slack,
+                           chunk_max_tokens=config.slack.chunk_max_tokens,
+                           chunk_overlap_tokens=config.slack.chunk_overlap_tokens,
+                           channel_ids=config.slack.channel_ids,
+                           gap_minutes=config.slack.gap_minutes)
+    stats = indexer.sync(since_days=days)
+    typer.echo(format_slack_sync_stats(stats))
+
+
 @index_app.command("sessions")
 def index_sessions(
     since: str | None = typer.Option(None, help="Lookback period (e.g. 30d). If set, overrides the stored cursor; otherwise incremental from cursor (or backfill_days on first run)."),
@@ -347,6 +392,7 @@ def status():
         f"Jira description chunks: {store.count('jira_descriptions')}",
         f"Jira discussion chunks: {store.count('jira_discussions')}",
         f"Slite page chunks: {store.count('slite_pages')}",
+        f"Slack message chunks: {store.count('slack_messages')}",
         f"Document chunks: {store.count('documents')}",
         f"Session log chunks: {store.count('session_logs')}",
     ]

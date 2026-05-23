@@ -82,6 +82,39 @@ def test_format_search_results_with_document():
     assert "Bearer tokens" in output
 
 
+def test_format_search_results_with_slack():
+    results = [
+        SearchResult(
+            chunk_id="s1",
+            text="[#deploys] thread:\n@Alice: how do we ship?\n@Bob: use the deploy script",
+            score=0.9,
+            metadata={
+                "chunk_type": "slack_thread",
+                "channel_name": "deploys",
+                "channel_id": "C1",
+                "participants": ["Alice", "Bob"],
+            },
+        ),
+    ]
+    output = format_search_results(results)
+    assert "#deploys" in output
+    assert "thread" in output
+    assert "Alice" in output and "Bob" in output
+    assert "deploy script" in output
+
+
+def test_format_slack_sync_stats():
+    from devrag.types import SlackSyncStats
+    from devrag.utils.formatters import format_slack_sync_stats
+    stats = SlackSyncStats(channels_scanned=5, threads_indexed=8, windows_indexed=12,
+                           chunks_created=20, channels_skipped=2)
+    output = format_slack_sync_stats(stats)
+    assert "5" in output
+    assert "8" in output
+    assert "12" in output
+    assert "20" in output
+
+
 def test_format_doc_index_stats():
     from devrag.types import DocIndexStats
     stats = DocIndexStats(files_scanned=10, files_indexed=8, chunks_created=42)

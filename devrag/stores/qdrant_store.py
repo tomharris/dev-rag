@@ -30,6 +30,7 @@ PAYLOAD_INDEX_FIELDS: dict[str, PayloadSchemaType] = {
     "ticket_key": PayloadSchemaType.KEYWORD,
     "page_id": PayloadSchemaType.KEYWORD,
     "session_id": PayloadSchemaType.KEYWORD,
+    "channel_id": PayloadSchemaType.KEYWORD,
     "chunk_type": PayloadSchemaType.KEYWORD,
 }
 
