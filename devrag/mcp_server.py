@@ -15,11 +15,12 @@ from devrag.ingest.pr_indexer import PRIndexer
 from devrag.ingest.session_indexer import SessionsIndexer
 from devrag.ingest.slite_indexer import SliteIndexer
 from devrag.ingest.sparse_encoder import BM25SparseEncoder
-from devrag.retrieve.hybrid_search import HybridSearch, deduplicate_results
+from devrag.retrieve.hybrid_search import HybridSearch, search_rank_dedupe
 from devrag.retrieve.query_router import QueryRouter
 from devrag.retrieve.reranker import Reranker
 from devrag.stores.qdrant_store import QdrantStore
 from devrag.stores.metadata_db import MetadataDB
+from devrag.utils.git import infer_repo
 from devrag.utils.formatters import format_doc_index_stats, format_index_stats, format_issue_sync_stats, format_jira_sync_stats, format_pr_sync_stats, format_search_results, format_session_sync_stats, format_slite_sync_stats
 from devrag.utils.github import GitHubClient
 from devrag.utils.jira_client import JiraClient
@@ -86,7 +87,10 @@ def _get_reranker() -> Reranker:
     global _reranker
     if _reranker is None:
         config = _get_config()
-        _reranker = Reranker(model_name=config.retrieval.reranker_model)
+        _reranker = Reranker(
+            model_name=config.retrieval.reranker_model,
+            max_length=config.retrieval.reranker_max_length,
+        )
     return _reranker
 
 
@@ -130,7 +134,7 @@ def search(
     and honored by both the dense and sparse (BM25) legs of hybrid search.
     """
     config = _get_config()
-    top_k = top_k if top_k > 0 else config.retrieval.final_k
+    final_k = top_k if top_k > 0 else config.retrieval.final_k
     router = QueryRouter()
     collections = router.route(query, scope=scope)
     where: dict = {}
@@ -156,13 +160,12 @@ def search(
         embedder=_get_embedder(),
         sparse_encoder=_get_sparse_encoder(),
     )
-    candidates = hybrid.search(query, top_k=config.retrieval.top_k, collections=collections, where=where)
-    if config.retrieval.rerank and candidates:
-        reranker = _get_reranker()
-        results = reranker.rerank(query, candidates, top_k=top_k)
-    else:
-        results = candidates[:top_k]
-    results = deduplicate_results(results, max_per_source=config.retrieval.max_per_source)
+    reranker = _get_reranker() if config.retrieval.rerank else None
+    # When no explicit repo filter is given, softly prefer the repo the server runs in.
+    prefer_repo = ""
+    if not repo and config.retrieval.repo_boost:
+        prefer_repo = infer_repo(Path.cwd(), _get_metadata_db().get_all_repos())
+    results = search_rank_dedupe(hybrid, reranker, query, collections, where, config, final_k, prefer_repo)
     return format_search_results(results)
 
 

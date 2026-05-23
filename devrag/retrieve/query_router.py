@@ -94,7 +94,7 @@ class QueryRouter:
                 return PR_COLLECTIONS
         for pattern in _DOC_PATTERNS:
             if re.search(pattern, q):
-                return DOC_COLLECTIONS
+                return DOC_COLLECTIONS + CODE_COLLECTIONS
         for pattern in _USAGE_PATTERNS:
             if re.search(pattern, q):
                 return ["code_chunks", "pr_diffs"]

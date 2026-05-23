@@ -42,3 +42,9 @@ def test_reranker_empty_candidates(mock_ce_class):
     reranker = Reranker(model_name="cross-encoder/ms-marco-MiniLM-L-6-v2")
     results = reranker.rerank("query", [], top_k=5)
     assert results == []
+
+
+@patch("devrag.retrieve.reranker.CrossEncoder")
+def test_reranker_passes_max_length_to_model(mock_ce_class):
+    Reranker(model_name="cross-encoder/ms-marco-MiniLM-L-6-v2", max_length=256)
+    assert mock_ce_class.call_args.kwargs["max_length"] == 256

@@ -36,8 +36,10 @@ class RetrievalConfig:
     final_k: int = 5
     rerank: bool = True
     reranker_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    reranker_max_length: int = 512
     rrf_k: int = 60
     max_per_source: int = 2
+    repo_boost: float = 0.15  # moderate preference for the cwd repo; fraction of score spread (0 = off)
 
 
 @dataclass

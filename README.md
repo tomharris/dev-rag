@@ -232,6 +232,7 @@ Restart your Claude Code session after editing so the hooks register.
 │                     RETRIEVAL LAYER                                 │
 │  Query Router ──→ Hybrid Search (server-side dense+BM25 RRF) ──→ Reranker│
 │  (intent → collections)                          (cross-encoder)   │
+│       └─→ repo-preference boost ──→ dedup per source ──→ final_k    │
 └────────────┬────────────────────────────────────────────────────────┘
              │
              ▼
@@ -290,9 +291,12 @@ vector_store:
 
 retrieval:
   top_k: 20                     # Candidates before reranking
-  final_k: 5                    # Results after reranking
+  final_k: 5                    # Results after reranking (dedup runs on the full pool first)
   rerank: true
   reranker_model: cross-encoder/ms-marco-MiniLM-L-6-v2
+  reranker_max_length: 512      # Cross-encoder token limit; raise for longer chunks
+  max_per_source: 2             # Max results kept per file/PR/issue/etc.
+  repo_boost: 0.15              # Soft preference for the cwd repo (fraction of score spread; 0 = off)
 
 code:
   chunk_max_tokens: 512
