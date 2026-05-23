@@ -103,5 +103,13 @@ class SlackClient:
         """Yield workspace member dicts for resolving user IDs to display names."""
         yield from self._paginate("users.list", "members", {})
 
+    def auth_test(self) -> dict:
+        """Return ``{user, team, url, …}`` for the session, validating the credentials.
+
+        A cheap single call (no pagination) that confirms the token/cookie are
+        live — it raises ``SlackAuthError`` via ``_call`` if they were rejected.
+        """
+        return self._call("auth.test", {})
+
     def close(self) -> None:
         self._client.close()

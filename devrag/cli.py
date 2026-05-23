@@ -6,8 +6,10 @@ import typer
 app = typer.Typer(name="devrag", help="Local RAG system for developer teams.")
 index_app = typer.Typer(help="Index code, docs, or PRs.")
 config_app = typer.Typer(help="Manage configuration.")
+auth_app = typer.Typer(help="Obtain credentials for external sources.")
 app.add_typer(index_app, name="index")
 app.add_typer(config_app, name="config")
+app.add_typer(auth_app, name="auth")
 
 
 def _make_embedder(config):
@@ -445,6 +447,63 @@ def config_get(
             typer.echo(f"Unknown key: {key}", err=True)
             raise typer.Exit(1)
     typer.echo(f"{key} = {current}")
+
+
+@auth_app.command("slack")
+def auth_slack(
+    workspace: str = typer.Option(
+        None, help="Slack workspace subdomain (the <x> in https://<x>.slack.com). "
+                   "Falls back to slack.workspace in config."),
+    browser: str = typer.Option(
+        None, help="Browser to read the `d` cookie from "
+                   "(chrome/firefox/brave/edge/chromium); auto-detect if unset."),
+):
+    """Obtain Slack session credentials from your browser and print shell exports.
+
+    Reads the `d` cookie from your local browser profile, derives the xoxc token
+    over HTTP, validates the pair, then prints `export …` lines. Use it as:
+
+        eval "$(devrag auth slack --workspace mycorp)"
+
+    so the SLACK_XOXC_TOKEN / SLACK_XOXD_COOKIE env vars are set for `devrag index slack`.
+    """
+    import shlex
+    from devrag.config import load_config
+    from devrag.utils.slack_auth import read_d_cookie, derive_xoxc_token
+    from devrag.utils.slack_client import SlackClient, SlackError
+
+    config = load_config(project_dir=Path.cwd())
+    ws = workspace or config.slack.workspace
+    if not ws:
+        typer.echo(
+            "Error: no workspace given. Pass --workspace <subdomain> (the <x> in "
+            "https://<x>.slack.com) or set slack.workspace in .devrag.yaml.",
+            err=True,
+        )
+        raise typer.Exit(1)
+
+    try:
+        cookie = read_d_cookie(browser=browser)
+        token = derive_xoxc_token(ws, cookie)
+        identity = SlackClient(token=token, cookie=cookie).auth_test()
+    except SlackError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(1)
+
+    token_env = config.slack.slack_token_env
+    cookie_env = config.slack.slack_cookie_env
+    # Confirmation + guidance go to stderr so `eval "$(…)"` only consumes the exports.
+    typer.echo(
+        f"✓ Authenticated as {identity.get('user')} on {identity.get('team')} "
+        f"({ws}.slack.com).\n"
+        "These session credentials expire when your browser session rotates — "
+        f"re-run `eval \"$(devrag auth slack --workspace {ws})\"` when indexing "
+        "starts failing with a re-extract error.",
+        err=True,
+    )
+    # stdout: the only thing eval should capture, shell-quoted for safety.
+    typer.echo(f"export {token_env}={shlex.quote(token)}")
+    typer.echo(f"export {cookie_env}={shlex.quote(cookie)}")
 
 
 @app.command()

@@ -136,7 +136,26 @@ install it with OAuth scopes. DevRAG skips that entirely: it authenticates as **
 the logged-in user, using the same credentials your browser already holds — so no app,
 no admin approval, and it indexes exactly what you can already see.
 
-**Extract the two credentials from your browser** (while logged in to Slack on the web):
+**Get the credentials automatically** (recommended; you just need to be logged in to
+Slack in your browser):
+
+```bash
+uv sync --extra slack-auth                          # one-time: installs the cookie reader
+eval "$(devrag auth slack --workspace mycorp)"      # mycorp = the <x> in https://<x>.slack.com
+devrag index slack
+```
+
+`devrag auth slack` reads the `d` cookie from your local browser profile, derives the
+`xoxc` token over HTTP, validates the pair, and prints the two `export` lines — so
+`eval "$(…)"` sets `SLACK_XOXC_TOKEN` / `SLACK_XOXD_COOKIE` in your shell. Pass `--browser`
+(chrome/firefox/brave/edge/chromium) to pick a browser, and set `slack.workspace` in
+`.devrag.yaml` to skip `--workspace` on re-runs. Nothing is written to disk by devrag.
+
+<details>
+<summary><b>Manual fallback</b> — if cookie decryption fails (locked keyring / Chrome
+app-bound encryption)</summary>
+
+Extract the two credentials from your browser (while logged in to Slack on the web):
 
 1. Open Slack in your browser → DevTools (F12) → **Console**.
 2. Token (`xoxc-…`): run
@@ -146,6 +165,7 @@ no admin approval, and it indexes exactly what you can already see.
    the value of the cookie named **`d`** (URL-decode `%2F`→`/` etc. if needed).
 4. `export SLACK_XOXC_TOKEN=xoxc-…` and `export SLACK_XOXD_COOKIE=xoxd-…`, then
    `devrag index slack`.
+</details>
 
 **Scope:** public channels you belong to by default. To index only specific channels
 (of any type), set an allowlist in `.devrag.yaml` under `slack.channel_ids`. Threads are
