@@ -116,6 +116,22 @@ def test_slack_query_keyword():
     assert "slack_messages" in router.route("what was discussed in slack about the deploy")
 
 
+def test_slack_query_includes_code():
+    """A Slack-named code subject (e.g. 'slack client') must still reach code."""
+    router = QueryRouter()
+    collections = router.route("slack client")
+    assert "slack_messages" in collections
+    assert "code_chunks" in collections
+
+
+def test_jira_query_includes_code():
+    """A Jira-named code subject (e.g. 'jira client') must still reach code."""
+    router = QueryRouter()
+    collections = router.route("jira client implementation")
+    assert "jira_descriptions" in collections
+    assert "code_chunks" in collections
+
+
 def test_all_collections_include_slack():
     from devrag.retrieve.query_router import ALL_COLLECTIONS
     assert "slack_messages" in ALL_COLLECTIONS
