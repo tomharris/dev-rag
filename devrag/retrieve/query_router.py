@@ -90,13 +90,13 @@ class QueryRouter:
                 return SESSION_COLLECTIONS
         for pattern in _SLACK_PATTERNS:
             if re.search(pattern, q):
-                return SLACK_COLLECTIONS
+                return SLACK_COLLECTIONS + CODE_COLLECTIONS
         for pattern in _SLITE_PATTERNS:
             if re.search(pattern, q):
                 return SLITE_COLLECTIONS + DOC_COLLECTIONS
         for pattern in _JIRA_PATTERNS:
             if re.search(pattern, q):
-                return JIRA_COLLECTIONS
+                return JIRA_COLLECTIONS + CODE_COLLECTIONS
         for pattern in _ISSUE_PATTERNS:
             if re.search(pattern, q):
                 return ISSUE_COLLECTIONS + JIRA_COLLECTIONS
