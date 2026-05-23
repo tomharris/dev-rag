@@ -150,6 +150,12 @@ devrag index slack
 (chrome/firefox/brave/edge/chromium) to pick a browser, and set `slack.workspace` in
 `.devrag.yaml` to skip `--workspace` on re-runs. Nothing is written to disk by devrag.
 
+Auto-detect (no `--browser`) sweeps every supported browser and skips any whose profile
+it can't read, so an unsupported/missing browser doesn't abort the search. The cookie must
+live in a browser profile **on the machine running the command** — if you're logged in on a
+different machine, or your browser stores its profile in a non-standard location (some
+Snap/Flatpak installs), use `--browser` or the manual fallback below.
+
 <details>
 <summary><b>Manual fallback</b> — if cookie decryption fails (locked keyring / Chrome
 app-bound encryption)</summary>

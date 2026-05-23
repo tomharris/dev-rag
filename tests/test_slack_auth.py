@@ -62,11 +62,19 @@ class _FakeCookie:
 
 @pytest.fixture
 def fake_browser_cookie3(monkeypatch):
-    """Inject a fake browser_cookie3 module; tests set its `.load` return value."""
+    """Inject a fake browser_cookie3 module.
+
+    Tests set ``_jar`` (the cookies a loader returns); both the named loaders
+    and the auto-detect ``all_browsers`` list resolve through it. Tests that
+    exercise the multi-browser sweep override ``all_browsers`` directly.
+    """
     mod = types.ModuleType("browser_cookie3")
     mod._jar = []
-    mod.load = lambda domain_name=None: mod._jar
-    mod.chrome = lambda domain_name=None: mod._jar
+    loader = lambda domain_name=None: mod._jar
+    mod.load = loader
+    for name in ("chrome", "chromium", "firefox", "brave", "edge"):
+        setattr(mod, name, loader)
+    mod.all_browsers = [loader]
     monkeypatch.setitem(sys.modules, "browser_cookie3", mod)
     return mod
 
@@ -85,6 +93,31 @@ def test_read_d_cookie_raises_when_absent(fake_browser_cookie3):
 def test_read_d_cookie_unknown_browser(fake_browser_cookie3):
     with pytest.raises(SlackAuthError, match="Unknown browser"):
         read_d_cookie(browser="netscape")
+
+
+def test_read_d_cookie_skips_failing_browser_loader(fake_browser_cookie3):
+    # Reproduces the Arc-on-Linux bug: one loader raises a TypeError (not a
+    # BrowserCookieError), which must not abort the auto-detect sweep. The
+    # logged-in browser later in the list should still yield the `d` cookie.
+    def broken(domain_name=None):
+        raise TypeError("expected str, bytes or os.PathLike object, not NoneType")
+
+    def good(domain_name=None):
+        return [_FakeCookie("d", "xoxd-recovered")]
+
+    fake_browser_cookie3.all_browsers = [broken, good]
+    assert read_d_cookie() == "xoxd-recovered"
+
+
+def test_read_d_cookie_explicit_browser_surfaces_real_error(fake_browser_cookie3):
+    # When a specific browser is requested, a genuine loader failure (e.g.
+    # keyring decryption) must be surfaced, not silently swallowed.
+    def boom(domain_name=None):
+        raise RuntimeError("keyring is locked")
+
+    fake_browser_cookie3.chrome = boom
+    with pytest.raises(SlackAuthError, match="keyring is locked"):
+        read_d_cookie(browser="chrome")
 
 
 # --- CLI --------------------------------------------------------------------

@@ -57,16 +57,45 @@ def read_d_cookie(browser: str | None = None, domain: str = "slack.com") -> str:
         raise SlackAuthError(
             f"Unknown browser '{browser}'. Choose one of: {', '.join(loaders)}."
         )
-    loader = loaders[browser] if browser else browser_cookie3.load
-    browser_label = f"{browser.capitalize()}" if browser else "your browser"
 
-    try:
-        jar = loader(domain_name=domain)
-    except Exception as exc:  # browser_cookie3 raises various OS/decryption errors
-        raise SlackAuthError(
-            _NO_COOKIE_HINT.format(detail=exc, browser_label=browser_label)
-        ) from exc
+    # Explicit browser: try the one loader and surface its real failure (e.g. a
+    # keyring-decryption error) verbatim — don't swallow it.
+    if browser is not None:
+        browser_label = browser.capitalize()
+        try:
+            jar = loaders[browser](domain_name=domain)
+        except Exception as exc:  # browser_cookie3 raises various OS/decryption errors
+            raise SlackAuthError(
+                _NO_COOKIE_HINT.format(detail=exc, browser_label=browser_label)
+            ) from exc
+        return _find_d_cookie(jar, browser_label)
 
+    # Auto-detect: sweep every supported browser ourselves rather than via
+    # browser_cookie3.load(), which only catches BrowserCookieError. A loader
+    # that raises anything else (notably the Arc loader's TypeError on Linux,
+    # where Arc has no cookie path) would otherwise abort load()'s whole sweep
+    # and discard cookies already collected from Chrome/Firefox. We try each
+    # independently and skip the ones that throw.
+    skipped = 0
+    for loader in browser_cookie3.all_browsers:
+        try:
+            jar = loader(domain_name=domain)
+        except Exception:  # unsupported/locked profile for this browser — skip it
+            skipped += 1
+            continue
+        for cookie in jar:
+            if cookie.name == "d":
+                return cookie.value
+    detail = "no `d` cookie found"
+    if skipped:
+        detail += f"; {skipped} browser profile(s) couldn't be read and were skipped"
+    raise SlackAuthError(
+        _NO_COOKIE_HINT.format(detail=detail, browser_label="your browser")
+    )
+
+
+def _find_d_cookie(jar, browser_label: str) -> str:
+    """Return the ``d`` cookie value from ``jar`` or raise the no-cookie hint."""
     for cookie in jar:
         if cookie.name == "d":
             return cookie.value
