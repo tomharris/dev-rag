@@ -8,7 +8,11 @@ from typer.testing import CliRunner
 
 from devrag.cli import app
 from devrag.utils import slack_auth
-from devrag.utils.slack_auth import derive_xoxc_token, read_d_cookie
+from devrag.utils.slack_auth import (
+    derive_xoxc_token,
+    read_d_cookie,
+    read_d_cookie_from_slack_app,
+)
 from devrag.utils.slack_client import SlackAuthError
 
 runner = CliRunner()
@@ -67,6 +71,10 @@ def fake_browser_cookie3(monkeypatch):
     Tests set ``_jar`` (the cookies a loader returns); both the named loaders
     and the auto-detect ``all_browsers`` list resolve through it. Tests that
     exercise the multi-browser sweep override ``all_browsers`` directly.
+
+    ``ChromiumBased`` (used by the Slack desktop-app reader) defaults to "app not
+    installed" — its ``.load()`` raises — so auto-mode cleanly falls through to
+    the browser sweep. Desktop-specific tests replace ``ChromiumBased``.
     """
     mod = types.ModuleType("browser_cookie3")
     mod._jar = []
@@ -75,8 +83,31 @@ def fake_browser_cookie3(monkeypatch):
     for name in ("chrome", "chromium", "firefox", "brave", "edge"):
         setattr(mod, name, loader)
     mod.all_browsers = [loader]
+
+    class _NoSlackApp:
+        def __init__(self, **kwargs):
+            pass
+
+        def load(self):
+            raise Exception("Failed to find cookies for Slack browser")
+
+    mod.ChromiumBased = _NoSlackApp
     monkeypatch.setitem(sys.modules, "browser_cookie3", mod)
     return mod
+
+
+def _slack_app_returning(value):
+    """A fake ``ChromiumBased`` whose ``.load()`` yields a jar with a ``d`` cookie."""
+    class _FakeSlackApp:
+        last_kwargs: dict = {}
+
+        def __init__(self, **kwargs):
+            type(self).last_kwargs = kwargs
+
+        def load(self):
+            return [_FakeCookie("d", value)]
+
+    return _FakeSlackApp
 
 
 def test_read_d_cookie_returns_value(fake_browser_cookie3):
@@ -91,8 +122,49 @@ def test_read_d_cookie_raises_when_absent(fake_browser_cookie3):
 
 
 def test_read_d_cookie_unknown_browser(fake_browser_cookie3):
-    with pytest.raises(SlackAuthError, match="Unknown browser"):
+    with pytest.raises(SlackAuthError, match="Unknown source"):
         read_d_cookie(browser="netscape")
+
+
+# --- Slack desktop app source ----------------------------------------------
+
+def test_read_d_cookie_from_slack_app_reads_desktop_cookie(fake_browser_cookie3):
+    fake_browser_cookie3.ChromiumBased = _slack_app_returning("xoxd-desktop")
+    assert read_d_cookie_from_slack_app() == "xoxd-desktop"
+    # Slack's Chromium identity must be passed through to browser_cookie3.
+    kwargs = fake_browser_cookie3.ChromiumBased.last_kwargs
+    assert kwargs["browser"] == "Slack"
+    assert kwargs["os_crypt_name"] == "slack"
+    assert kwargs["osx_key_service"] == "Slack Safe Storage"
+
+
+def test_read_d_cookie_from_slack_app_raises_when_unavailable(fake_browser_cookie3):
+    # Default fixture ChromiumBased.load() raises (app not installed).
+    with pytest.raises(SlackAuthError, match="Slack desktop app"):
+        read_d_cookie_from_slack_app()
+
+
+def test_read_d_cookie_auto_prefers_desktop_app(fake_browser_cookie3):
+    # Desktop app wins even when a browser also holds a `d` cookie.
+    fake_browser_cookie3.ChromiumBased = _slack_app_returning("xoxd-desktop")
+    fake_browser_cookie3._jar = [_FakeCookie("d", "xoxd-browser")]
+    assert read_d_cookie() == "xoxd-desktop"
+
+
+def test_read_d_cookie_auto_falls_back_to_browser(fake_browser_cookie3):
+    # Desktop app unavailable (default fixture) → browser sweep supplies it.
+    fake_browser_cookie3._jar = [_FakeCookie("d", "xoxd-browser")]
+    assert read_d_cookie() == "xoxd-browser"
+
+
+def test_read_d_cookie_explicit_slack_skips_browsers(fake_browser_cookie3):
+    fake_browser_cookie3.ChromiumBased = _slack_app_returning("xoxd-desktop")
+
+    def boom(domain_name=None):
+        raise AssertionError("browsers must not be read when source is 'slack'")
+
+    fake_browser_cookie3.all_browsers = [boom]
+    assert read_d_cookie(browser="slack") == "xoxd-desktop"
 
 
 def test_read_d_cookie_skips_failing_browser_loader(fake_browser_cookie3):
