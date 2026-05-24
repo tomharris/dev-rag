@@ -1,9 +1,16 @@
 """Obtain Slack session credentials (xoxc token + xoxd `d` cookie) automatically.
 
-The web client holds two secrets: the ``d`` cookie (``xoxd-…``) lives in the
-browser's cookie store, and the ``xoxc-…`` token is exposed in the boot data of
-any workspace page. So we read the cookie from the local browser profile, then
-*derive* the token over HTTP — no headless browser or localStorage parsing.
+The web client holds two secrets: the ``d`` cookie (``xoxd-…``) lives in a
+Chromium cookie store, and the ``xoxc-…`` token is exposed in the boot data of
+any workspace page. So we read the cookie locally, then *derive* the token over
+HTTP — no headless browser or localStorage parsing.
+
+The cookie store we read is, by default, the **Slack desktop app's** (an
+Electron/Chromium app — its ``d`` cookie lives in a ``Cookies`` SQLite file just
+like a browser's). Browsers are tried as a fallback. Desktop-only users are
+never logged in via a browser, so the app is the more reliable source. The token
+still lives in the app's LevelDB store, but we never touch that — we derive it
+over HTTP, consistent with this module's "no localStorage parsing" design.
 
 Used by ``devrag auth slack``. See ``devrag/utils/slack_client.py`` for how the
 pair is consumed once obtained.
@@ -19,10 +26,36 @@ import httpx
 from devrag.utils.slack_client import SlackAuthError
 
 _NO_COOKIE_HINT = (
-    "Couldn't read the Slack `d` cookie from your browser ({detail}). Make sure "
-    "you're logged in to Slack in {browser_label}, or fall back to the manual "
-    "extraction steps in the README."
+    "Couldn't read the Slack `d` cookie from {source_label} ({detail}). Make sure "
+    "you're logged in to Slack there, or fall back to the manual extraction steps "
+    "in the README."
 )
+
+# Where the Slack desktop app keeps its Chromium cookie store, per OS. These are
+# handed to ``ChromiumBased`` as candidate lists; it globs and picks the first
+# one that exists, so order/extra entries are harmless.
+_SLACK_APP_PATHS = {
+    "linux_cookies": [
+        "~/.config/Slack/Cookies",
+        "~/.config/Slack/Network/Cookies",
+        # Snap / Flatpak installs keep their own confined config tree.
+        "~/snap/slack/current/.config/Slack/Cookies",
+        "~/snap/slack/current/.config/Slack/Network/Cookies",
+        "~/.var/app/com.slack.Slack/config/Slack/Cookies",
+        "~/.var/app/com.slack.Slack/config/Slack/Network/Cookies",
+    ],
+    "osx_cookies": [
+        "~/Library/Application Support/Slack/Cookies",
+        "~/Library/Application Support/Slack/Network/Cookies",
+    ],
+    # Windows paths are resolved relative to %APPDATA% by browser_cookie3, so
+    # they must NOT include the variable themselves.
+    "windows_cookies": [
+        "Slack\\Cookies",
+        "Slack\\Network\\Cookies",
+    ],
+    "windows_keys": ["Slack\\Local State"],
+}
 
 _NO_TOKEN_HINT = (
     "Fetched https://{workspace}.slack.com/ but found no xoxc token in the page. "
@@ -32,11 +65,13 @@ _NO_TOKEN_HINT = (
 
 
 def read_d_cookie(browser: str | None = None, domain: str = "slack.com") -> str:
-    """Read the Slack ``d`` cookie value from the local browser profile.
+    """Read the Slack ``d`` cookie value from a local Chromium cookie store.
 
-    ``browser`` selects a specific browser (``chrome``/``firefox``/``brave``/
-    ``edge``); ``None`` lets browser_cookie3 auto-detect across installed
-    browsers. Decryption uses the OS keyring, so a logged-in session is enough.
+    ``browser`` selects a specific source: ``slack`` (alias ``desktop``) reads the
+    Slack desktop app; ``chrome``/``firefox``/``brave``/``edge``/``chromium`` read
+    that browser. ``None`` (auto) tries the **Slack desktop app first**, then
+    sweeps installed browsers. Decryption uses the OS keyring, so a logged-in
+    session is enough.
 
     Raises ``SlackAuthError`` (with the manual-fallback hint) when the cookie is
     absent or can't be decrypted — never returns an empty/garbage value.
@@ -53,9 +88,15 @@ def read_d_cookie(browser: str | None = None, domain: str = "slack.com") -> str:
         "edge": getattr(browser_cookie3, "edge", None),
         "chromium": getattr(browser_cookie3, "chromium", None),
     }
+
+    # Explicit Slack desktop app.
+    if browser in ("slack", "desktop"):
+        return read_d_cookie_from_slack_app(domain=domain)
+
     if browser is not None and browser not in loaders:
         raise SlackAuthError(
-            f"Unknown browser '{browser}'. Choose one of: {', '.join(loaders)}."
+            f"Unknown source '{browser}'. Choose 'slack' (desktop app) or one of: "
+            f"{', '.join(loaders)}."
         )
 
     # Explicit browser: try the one loader and surface its real failure (e.g. a
@@ -66,11 +107,19 @@ def read_d_cookie(browser: str | None = None, domain: str = "slack.com") -> str:
             jar = loaders[browser](domain_name=domain)
         except Exception as exc:  # browser_cookie3 raises various OS/decryption errors
             raise SlackAuthError(
-                _NO_COOKIE_HINT.format(detail=exc, browser_label=browser_label)
+                _NO_COOKIE_HINT.format(detail=exc, source_label=browser_label)
             ) from exc
         return _find_d_cookie(jar, browser_label)
 
-    # Auto-detect: sweep every supported browser ourselves rather than via
+    # Auto-detect: the Slack desktop app is the most reliable source (desktop-only
+    # users have no browser session), so try it first and fall through to browsers
+    # only if it yields nothing.
+    try:
+        return read_d_cookie_from_slack_app(domain=domain)
+    except SlackAuthError:
+        pass
+
+    # Browser sweep: iterate every supported browser ourselves rather than via
     # browser_cookie3.load(), which only catches BrowserCookieError. A loader
     # that raises anything else (notably the Arc loader's TypeError on Linux,
     # where Arc has no cookie path) would otherwise abort load()'s whole sweep
@@ -90,17 +139,47 @@ def read_d_cookie(browser: str | None = None, domain: str = "slack.com") -> str:
     if skipped:
         detail += f"; {skipped} browser profile(s) couldn't be read and were skipped"
     raise SlackAuthError(
-        _NO_COOKIE_HINT.format(detail=detail, browser_label="your browser")
+        _NO_COOKIE_HINT.format(detail=detail, source_label="the Slack desktop app or any browser")
     )
 
 
-def _find_d_cookie(jar, browser_label: str) -> str:
+def read_d_cookie_from_slack_app(domain: str = "slack.com") -> str:
+    """Read the Slack ``d`` cookie from the Slack **desktop app's** cookie store.
+
+    The app is an Electron/Chromium app, so its ``Cookies`` SQLite file decrypts
+    with the same machinery ``browser_cookie3`` uses for real browsers — we just
+    point ``ChromiumBased`` at Slack's paths and OS-crypt identity ("Slack Safe
+    Storage" on macOS, the ``slack`` Secret Service entry on Linux, the app's
+    ``Local State`` DPAPI key on Windows). ``ChromiumBased`` copies the DB to a
+    temp file before reading, so this works even while Slack is running.
+
+    Raises ``SlackAuthError`` (app not installed / not logged in / cookie absent).
+    """
+    from browser_cookie3 import ChromiumBased
+
+    try:
+        jar = ChromiumBased(
+            browser="Slack",
+            domain_name=domain,
+            os_crypt_name="slack",
+            osx_key_service="Slack Safe Storage",
+            osx_key_user="Slack",
+            **_SLACK_APP_PATHS,
+        ).load()
+    except Exception as exc:  # no cookie file (app not installed) / decryption error
+        raise SlackAuthError(
+            _NO_COOKIE_HINT.format(detail=exc, source_label="the Slack desktop app")
+        ) from exc
+    return _find_d_cookie(jar, "the Slack desktop app")
+
+
+def _find_d_cookie(jar, source_label: str) -> str:
     """Return the ``d`` cookie value from ``jar`` or raise the no-cookie hint."""
     for cookie in jar:
         if cookie.name == "d":
             return cookie.value
     raise SlackAuthError(
-        _NO_COOKIE_HINT.format(detail="no `d` cookie found", browser_label=browser_label)
+        _NO_COOKIE_HINT.format(detail="no `d` cookie found", source_label=source_label)
     )
 
 

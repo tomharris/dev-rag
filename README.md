@@ -137,24 +137,28 @@ the logged-in user, using the same credentials your browser already holds — so
 no admin approval, and it indexes exactly what you can already see.
 
 **Get the credentials automatically** (recommended; you just need to be logged in to
-Slack in your browser):
+the Slack desktop app or a browser):
 
 ```bash
 eval "$(devrag auth slack --workspace mycorp)"      # mycorp = the <x> in https://<x>.slack.com
 devrag index slack
 ```
 
-`devrag auth slack` reads the `d` cookie from your local browser profile, derives the
-`xoxc` token over HTTP, validates the pair, and prints the two `export` lines — so
-`eval "$(…)"` sets `SLACK_XOXC_TOKEN` / `SLACK_XOXD_COOKIE` in your shell. Pass `--browser`
-(chrome/firefox/brave/edge/chromium) to pick a browser, and set `slack.workspace` in
-`.devrag.yaml` to skip `--workspace` on re-runs. Nothing is written to disk by devrag.
+`devrag auth slack` reads the `d` cookie from the **Slack desktop app by default**,
+derives the `xoxc` token over HTTP, validates the pair, and prints the two `export`
+lines — so `eval "$(…)"` sets `SLACK_XOXC_TOKEN` / `SLACK_XOXD_COOKIE` in your shell.
+The desktop app is a Chromium app, so its cookie store decrypts with the same machinery
+used for browsers (no extra setup), and reading works even while Slack is running. Set
+`slack.workspace` in `.devrag.yaml` to skip `--workspace` on re-runs. Nothing is written
+to disk by devrag.
 
-Auto-detect (no `--browser`) sweeps every supported browser and skips any whose profile
-it can't read, so an unsupported/missing browser doesn't abort the search. The cookie must
-live in a browser profile **on the machine running the command** — if you're logged in on a
-different machine, or your browser stores its profile in a non-standard location (some
-Snap/Flatpak installs), use `--browser` or the manual fallback below.
+`--browser` selects the source explicitly: `slack` (the desktop app) or
+`chrome`/`firefox`/`brave`/`edge`/`chromium`. With no `--browser`, devrag tries the Slack
+desktop app first, then sweeps every supported browser, skipping any whose profile it
+can't read — so an unsupported/missing app or browser doesn't abort the search. The cookie
+must live **on the machine running the command** — if you're logged in only on a different
+machine, or your app/browser stores its profile in a non-standard location, use `--browser`
+or the manual fallback below.
 
 <details>
 <summary><b>Manual fallback</b> — if cookie decryption fails (locked keyring / Chrome

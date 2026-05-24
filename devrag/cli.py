@@ -455,13 +455,15 @@ def auth_slack(
         None, help="Slack workspace subdomain (the <x> in https://<x>.slack.com). "
                    "Falls back to slack.workspace in config."),
     browser: str = typer.Option(
-        None, help="Browser to read the `d` cookie from "
-                   "(chrome/firefox/brave/edge/chromium); auto-detect if unset."),
+        None, help="Where to read the `d` cookie from: slack (desktop app), "
+                   "chrome/firefox/brave/edge/chromium. If unset, tries the Slack "
+                   "desktop app first, then sweeps browsers."),
 ):
-    """Obtain Slack session credentials from your browser and print shell exports.
+    """Obtain Slack session credentials from the desktop app and print shell exports.
 
-    Reads the `d` cookie from your local browser profile, derives the xoxc token
-    over HTTP, validates the pair, then prints `export …` lines. Use it as:
+    Reads the `d` cookie from the Slack desktop app by default (falling back to
+    browsers), derives the xoxc token over HTTP, validates the pair, then prints
+    `export …` lines. Use it as:
 
         eval "$(devrag auth slack --workspace mycorp)"
 
