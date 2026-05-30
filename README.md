@@ -93,6 +93,8 @@ devrag index repo . --full                 # Force full re-index
 devrag index repo . --name my-repo         # Name for multi-repo support
 devrag index repo . --no-docs              # Code only, skip the repo's docs
 devrag index remove-repo my-repo           # Remove a repo from the index (code + docs)
+devrag index refresh                       # Re-index ALL registered repos (incremental; code + docs)
+devrag index refresh --full                # Full rebuild of every registered repo (external sources untouched)
 
 # `index repo` also indexes the repo's own docs (md/mdx/txt/rst/html/adoc) into
 # the documents collection, tagged with the repo name (so `search --repo <name>`

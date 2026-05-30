@@ -156,6 +156,79 @@ def remove_repo(
     typer.echo(f"Removed repo '{name}' ({len(chunk_ids)} chunks deleted).")
 
 
+@index_app.command("refresh")
+def index_refresh(
+    full: bool = typer.Option(False, "--full", help="Full re-embed of every registered repo (skip incremental)"),
+):
+    """Refresh all registered repos in place (incremental by default).
+
+    Walks the code_repos registry and re-indexes each repo's code and docs
+    without resetting external sync cursors. Missing repo directories are
+    skipped with a warning rather than aborting the sweep. Use --full to force
+    a clean per-repo rebuild (remove + non-incremental re-index).
+    """
+    from devrag.config import load_config
+    from devrag.ingest.code_indexer import CodeIndexer
+    from devrag.ingest.doc_indexer import DocIndexer
+    from devrag.ingest.refresh import refresh_all_repos
+    from devrag.stores.qdrant_store import QdrantStore
+    from devrag.stores.metadata_db import MetadataDB
+    from devrag.utils.formatters import format_index_stats, format_repo_doc_stats
+
+    config = load_config(project_dir=Path.cwd())
+    store = QdrantStore.from_config(config)
+    db_dir = Path("~/.local/share/devrag").expanduser()
+    db_dir.mkdir(parents=True, exist_ok=True)
+    meta = MetadataDB(str(db_dir / "metadata.db"))
+
+    repos = meta.get_all_repos()
+    if not repos:
+        typer.echo("No code repos registered. Run 'devrag index repo .' to index code.")
+        return
+
+    embedder = _make_embedder(config)
+    sparse_encoder = _make_sparse_encoder(config)
+    indexer = CodeIndexer(store, meta, embedder, sparse_encoder, config.code)
+    doc_indexer = DocIndexer(store, meta, embedder, sparse_encoder, config)
+
+    def _index(repo_dir, name, incremental):
+        stats = indexer.index_repo(repo_dir, incremental=incremental, repo_name=name)
+        typer.echo(f"    {format_index_stats(stats)}")
+        return stats
+
+    def _index_docs(repo_dir, name, incremental):
+        doc_stats = doc_indexer.index_repo_docs(
+            repo_dir, repo_name=name, incremental=incremental,
+            exclude_patterns=config.code.exclude_patterns,
+        )
+        typer.echo(f"    {format_repo_doc_stats(doc_stats)}")
+        return doc_stats
+
+    def _remove(name):
+        chunk_ids = meta._conn.execute(
+            "SELECT chunk_id FROM chunk_sources WHERE repo = ?", (name,)
+        ).fetchall()
+        ids = [r[0] for r in chunk_ids]
+        if ids:
+            store.delete("code_chunks", ids)
+            store.delete("documents", ids)
+        meta.remove_repo(name)
+        return len(ids)
+
+    summary = refresh_all_repos(
+        repos,
+        index_repo=_index,
+        index_repo_docs=_index_docs if config.code.index_docs else None,
+        remove_repo=_remove,
+        full=full,
+        log=typer.echo,
+    )
+    msg = f"Refreshed {summary.refreshed} repo(s)"
+    if summary.skipped:
+        msg += f", skipped {summary.skipped} (missing directories)"
+    typer.echo(msg + ".")
+
+
 @index_app.command("docs")
 def index_docs_cmd(
     path: str = typer.Argument(..., help="Path to docs directory"),

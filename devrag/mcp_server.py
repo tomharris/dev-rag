@@ -244,6 +244,83 @@ def index_docs(path: str, glob: str = "**/*.md") -> str:
 
 
 @mcp.tool
+def refresh(full: bool = False) -> str:
+    """Refresh all registered code repos in place (incremental by default).
+
+    Walks the code_repos registry and re-indexes each repo's code and docs,
+    skipping unchanged files. Unlike a full reset, external sync cursors
+    (PRs/issues/Jira/Slite/Slack) are never touched. Missing repo directories
+    are skipped with a warning rather than aborting the sweep.
+
+    Args:
+        full: Force a clean per-repo rebuild (remove each repo's chunks, then
+            re-index non-incrementally) instead of an incremental refresh.
+    """
+    from devrag.ingest.refresh import refresh_all_repos
+
+    config = _get_config()
+    store = _get_vector_store()
+    meta = _get_metadata_db()
+    repos = meta.get_all_repos()
+    if not repos:
+        return "No code repos registered. Run index_repo to index code."
+
+    code_indexer = CodeIndexer(
+        store=store,
+        meta=meta,
+        embedder=_get_embedder(),
+        sparse_encoder=_get_sparse_encoder(),
+        config=config.code,
+    )
+    doc_indexer = DocIndexer(
+        vector_store=store,
+        metadata_db=meta,
+        embedder=_get_embedder(),
+        sparse_encoder=_get_sparse_encoder(),
+        config=config,
+    )
+    lines: list[str] = []
+
+    def _index(repo_dir, name, incremental):
+        stats = code_indexer.index_repo(repo_dir, incremental=incremental, repo_name=name)
+        lines.append(format_index_stats(stats))
+        return stats
+
+    def _index_docs(repo_dir, name, incremental):
+        doc_stats = doc_indexer.index_repo_docs(
+            repo_dir, repo_name=name, incremental=incremental,
+            exclude_patterns=config.code.exclude_patterns,
+        )
+        lines.append(format_repo_doc_stats(doc_stats))
+        return doc_stats
+
+    def _remove(name):
+        chunk_ids = meta._conn.execute(
+            "SELECT chunk_id FROM chunk_sources WHERE repo = ?", (name,)
+        ).fetchall()
+        ids = [r[0] for r in chunk_ids]
+        if ids:
+            store.delete("code_chunks", ids)
+            store.delete("documents", ids)
+        meta.remove_repo(name)
+        return len(ids)
+
+    summary = refresh_all_repos(
+        repos,
+        index_repo=_index,
+        index_repo_docs=_index_docs if config.code.index_docs else None,
+        remove_repo=_remove,
+        full=full,
+        log=lines.append,
+    )
+    footer = f"Refreshed {summary.refreshed} repo(s)"
+    if summary.skipped:
+        footer += f", skipped {summary.skipped} (missing directories)"
+    lines.append(footer + ".")
+    return "\n".join(lines)
+
+
+@mcp.tool
 def sync_prs(repo: str, since_days: int | None = None) -> str:
     """Sync GitHub PRs for a repository.
 

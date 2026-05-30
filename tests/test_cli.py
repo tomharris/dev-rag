@@ -44,6 +44,12 @@ def test_cli_index_docs_help():
     assert result.exit_code == 0
 
 
+def test_cli_index_refresh_help():
+    result = runner.invoke(app, ["index", "refresh", "--help"])
+    assert result.exit_code == 0
+    assert "--full" in result.stdout
+
+
 def test_cli_index_prs_help():
     result = runner.invoke(app, ["index", "prs", "--help"])
     assert result.exit_code == 0
