@@ -167,6 +167,15 @@ def format_doc_index_stats(stats: DocIndexStats) -> str:
     return f"Scanned {stats.files_scanned} files. Indexed {stats.files_indexed} files ({stats.chunks_created} chunks)."
 
 
+def format_repo_doc_stats(stats: DocIndexStats) -> str:
+    parts = [f"Docs: indexed {stats.files_indexed} ({stats.chunks_created} chunks)"]
+    if stats.files_skipped:
+        parts.append(f"skipped {stats.files_skipped} unchanged")
+    if stats.files_removed:
+        parts.append(f"removed {stats.files_removed} deleted")
+    return ", ".join(parts) + "."
+
+
 def format_pr_sync_stats(stats: PRSyncStats) -> str:
     parts = [
         f"Fetched {stats.prs_fetched} PRs",

@@ -496,9 +496,15 @@ class CodeIndexer:
 
         current_paths = {str(f) for f in supported_files}
 
-        # Detect removed files — scoped to this repo only
+        # Detect removed files — scoped to this repo and to code extensions only.
+        # Docs indexed by DocIndexer share the same repo namespace in MetadataDB, so
+        # we must not treat a doc file as a "removed code file" here.
         previously_indexed = set(self._meta.get_indexed_files_for_repo(repo_name))
-        removed = previously_indexed - current_paths
+        previously_code = {
+            p for p in previously_indexed
+            if Path(p).suffix.lower() in LANGUAGE_EXTENSIONS or Path(p).suffix in LANGUAGE_EXTENSIONS
+        }
+        removed = previously_code - current_paths
         for removed_path in removed:
             self._remove_file(removed_path, repo=repo_name)
             stats.files_removed += 1
