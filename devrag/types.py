@@ -46,6 +46,8 @@ class DocIndexStats:
     """Statistics from a document indexing run."""
     files_scanned: int = 0
     files_indexed: int = 0
+    files_skipped: int = 0
+    files_removed: int = 0
     chunks_created: int = 0
 
 

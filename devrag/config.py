@@ -46,6 +46,7 @@ class RetrievalConfig:
 class CodeConfig:
     chunk_max_tokens: int = 512
     respect_gitignore: bool = True
+    index_docs: bool = True  # also index repo docs (md/txt/rst/…) into `documents` on `index repo`
     exclude_patterns: list[str] = field(default_factory=lambda: [
         "*.min.js",
         "vendor/**",

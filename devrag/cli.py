@@ -102,13 +102,15 @@ def index_repo(
     path: str = typer.Argument(".", help="Path to repository"),
     full: bool = typer.Option(False, "--full", help="Full re-index (skip incremental)"),
     name: str = typer.Option("", "--name", help="Repo name (default: directory name)"),
+    docs: bool = typer.Option(True, "--docs/--no-docs", help="Also index the repo's docs (md/txt/rst/…) into the documents collection"),
 ):
-    """Index a local code repository."""
+    """Index a local code repository (and, by default, its docs)."""
     from devrag.config import load_config
     from devrag.ingest.code_indexer import CodeIndexer
+    from devrag.ingest.doc_indexer import DocIndexer
     from devrag.stores.qdrant_store import QdrantStore
     from devrag.stores.metadata_db import MetadataDB
-    from devrag.utils.formatters import format_index_stats
+    from devrag.utils.formatters import format_index_stats, format_repo_doc_stats
     config = load_config(project_dir=Path.cwd())
     store = QdrantStore.from_config(config)
     db_dir = Path("~/.local/share/devrag").expanduser()
@@ -116,9 +118,17 @@ def index_repo(
     meta = MetadataDB(str(db_dir / "metadata.db"))
     embedder = _make_embedder(config)
     sparse_encoder = _make_sparse_encoder(config)
+    repo_path = Path(path).resolve()
     indexer = CodeIndexer(store, meta, embedder, sparse_encoder, config.code)
-    stats = indexer.index_repo(Path(path).resolve(), incremental=not full, repo_name=name)
+    stats = indexer.index_repo(repo_path, incremental=not full, repo_name=name)
     typer.echo(format_index_stats(stats))
+    if docs and config.code.index_docs:
+        doc_indexer = DocIndexer(store, meta, embedder, sparse_encoder, config)
+        doc_stats = doc_indexer.index_repo_docs(
+            repo_path, repo_name=name or repo_path.name, incremental=not full,
+            exclude_patterns=config.code.exclude_patterns,
+        )
+        typer.echo(format_repo_doc_stats(doc_stats))
 
 
 @index_app.command("remove-repo")
@@ -138,7 +148,10 @@ def remove_repo(
     ).fetchall()
     if chunk_ids:
         ids = [r[0] for r in chunk_ids]
+        # chunk_sources holds both code and doc chunks for the repo; IDs are
+        # disjoint across collections, so delete from both (absent IDs are no-ops).
         store.delete("code_chunks", ids)
+        store.delete("documents", ids)
     meta.remove_repo(name)
     typer.echo(f"Removed repo '{name}' ({len(chunk_ids)} chunks deleted).")
 
@@ -527,13 +540,23 @@ def reindex(
     """Reset and re-index everything, or re-index a single repo by name."""
     from devrag.config import load_config
     from devrag.ingest.code_indexer import CodeIndexer
+    from devrag.ingest.doc_indexer import DocIndexer
     from devrag.stores.qdrant_store import QdrantStore
     from devrag.stores.metadata_db import MetadataDB
-    from devrag.utils.formatters import format_index_stats
+    from devrag.utils.formatters import format_index_stats, format_repo_doc_stats
 
     if not all_collections and not name:
         typer.echo("Usage: devrag reindex --all | --name <repo>")
         raise typer.Exit(1)
+
+    def _reindex_repo_docs(doc_indexer, repo_dir, repo_name, config):
+        if not config.code.index_docs:
+            return
+        doc_stats = doc_indexer.index_repo_docs(
+            repo_dir, repo_name=repo_name, incremental=False,
+            exclude_patterns=config.code.exclude_patterns,
+        )
+        typer.echo(f"    {format_repo_doc_stats(doc_stats)}")
 
     config = load_config(project_dir=Path.cwd())
     store = QdrantStore.from_config(config)
@@ -555,12 +578,14 @@ def reindex(
             typer.echo(f"Directory not found: {repo_path}")
             raise typer.Exit(1)
 
-        # Remove existing chunks and metadata for this repo
+        # Remove existing chunks and metadata for this repo (code + docs)
         chunk_ids = meta._conn.execute(
             "SELECT chunk_id FROM chunk_sources WHERE repo = ?", (name,)
         ).fetchall()
         if chunk_ids:
-            store.delete("code_chunks", [r[0] for r in chunk_ids])
+            ids = [r[0] for r in chunk_ids]
+            store.delete("code_chunks", ids)
+            store.delete("documents", ids)
         meta.remove_repo(name)
         typer.echo(f"Cleared {len(chunk_ids)} chunks for '{name}'.")
 
@@ -571,6 +596,7 @@ def reindex(
         typer.echo(f"Re-indexing {repo_name} ({repo_path})...")
         stats = indexer.index_repo(repo_dir, incremental=False, repo_name=repo_name)
         typer.echo(format_index_stats(stats))
+        _reindex_repo_docs(DocIndexer(store, meta, embedder, sparse_encoder, config), repo_dir, repo_name, config)
         return
 
     # --all: full reset
@@ -590,6 +616,7 @@ def reindex(
         embedder = _make_embedder(config)
         sparse_encoder = _make_sparse_encoder(config)
         indexer = CodeIndexer(store, meta, embedder, sparse_encoder, config.code)
+        doc_indexer = DocIndexer(store, meta, embedder, sparse_encoder, config)
         total_chunks = 0
         for repo_name, repo_path in repos:
             repo_dir = Path(repo_path)
@@ -600,6 +627,7 @@ def reindex(
             stats = indexer.index_repo(repo_dir, incremental=False, repo_name=repo_name)
             total_chunks += stats.chunks_created
             typer.echo(f"    {format_index_stats(stats)}")
+            _reindex_repo_docs(doc_indexer, repo_dir, repo_name, config)
         typer.echo(f"Re-indexed {len(repos)} code repo(s) ({total_chunks} chunks).")
     else:
         typer.echo("No code repos registered. Run 'devrag index repo .' to index code.")

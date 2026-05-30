@@ -72,3 +72,88 @@ def test_doc_indexer_indexes_directory(tmp_dir, sparse_encoder):
     assert stats.chunks_created >= 2
     store.upsert.assert_called()
     embedder.embed.assert_called()
+
+
+# ---------------------------------------------------------------------------
+# index_repo_docs — per-repo doc indexing alongside code
+# ---------------------------------------------------------------------------
+
+import subprocess
+
+from devrag.stores.metadata_db import MetadataDB
+
+
+def _git_init(repo: Path) -> None:
+    subprocess.run(["git", "init", str(repo)], capture_output=True, check=True)
+    subprocess.run(["git", "config", "user.email", "t@t.com"], cwd=str(repo), capture_output=True)
+    subprocess.run(["git", "config", "user.name", "T"], cwd=str(repo), capture_output=True)
+
+
+@pytest.fixture
+def repo_doc_deps(tmp_dir, vector_store, sparse_encoder):
+    meta = MetadataDB(str(tmp_dir / "meta.db"))
+    embedder = MagicMock()
+    embedder.embed = MagicMock(side_effect=lambda texts: [[0.1] * 768 for _ in texts])
+    return vector_store, meta, embedder, sparse_encoder
+
+
+def test_index_repo_docs_indexes_and_tags_repo(tmp_dir, repo_doc_deps):
+    store, meta, embedder, sparse_encoder = repo_doc_deps
+    repo = tmp_dir / "repo"
+    repo.mkdir()
+    _git_init(repo)
+    (repo / "README.md").write_text("# Project\n\nWhat it does.\n\n## Usage\n\nRun it.\n")
+    (repo / "docs").mkdir()
+    (repo / "docs" / "guide.md").write_text("# Guide\n\nHow to use.\n")
+    (repo / "main.py").write_text("def hello():\n    return 'world'\n")  # not a doc — must be ignored
+
+    indexer = DocIndexer(store, meta, embedder, sparse_encoder)
+    stats = indexer.index_repo_docs(repo, repo_name="myrepo")
+
+    assert stats.files_scanned == 2  # only the two .md files, not main.py
+    assert stats.files_indexed == 2
+    assert stats.chunks_created >= 2
+    assert store.count("documents") >= 2
+
+    # Doc chunks are tracked under the repo namespace, and carry the repo tag.
+    readme_chunks = meta.get_chunks_for_file(str(repo / "README.md"), repo="myrepo")
+    assert readme_chunks
+    payload = store.get_by_ids("documents", readme_chunks[:1]).metadatas[0]
+    assert payload["repo"] == "myrepo"
+    assert payload["chunk_type"] == "document"
+
+
+def test_index_repo_docs_incremental_skips_unchanged(tmp_dir, repo_doc_deps):
+    store, meta, embedder, sparse_encoder = repo_doc_deps
+    repo = tmp_dir / "repo"
+    repo.mkdir()
+    _git_init(repo)
+    (repo / "README.md").write_text("# Project\n\nWhat it does.\n")
+    indexer = DocIndexer(store, meta, embedder, sparse_encoder)
+    s1 = indexer.index_repo_docs(repo, repo_name="myrepo")
+    assert s1.files_indexed == 1
+    embedder.embed.reset_mock()
+    s2 = indexer.index_repo_docs(repo, repo_name="myrepo", incremental=True)
+    assert s2.files_skipped == 1
+    assert s2.files_indexed == 0
+    embedder.embed.assert_not_called()
+
+
+def test_index_repo_docs_removes_deleted_doc(tmp_dir, repo_doc_deps):
+    store, meta, embedder, sparse_encoder = repo_doc_deps
+    repo = tmp_dir / "repo"
+    repo.mkdir()
+    _git_init(repo)
+    (repo / "README.md").write_text("# Project\n\nWhat it does.\n")
+    (repo / "EXTRA.md").write_text("# Extra\n\nDelete me.\n")
+    indexer = DocIndexer(store, meta, embedder, sparse_encoder)
+    indexer.index_repo_docs(repo, repo_name="myrepo")
+    extra_chunks = meta.get_chunks_for_file(str(repo / "EXTRA.md"), repo="myrepo")
+    assert extra_chunks
+
+    (repo / "EXTRA.md").unlink()
+    stats = indexer.index_repo_docs(repo, repo_name="myrepo")
+    assert stats.files_removed == 1
+    assert meta.get_chunks_for_file(str(repo / "EXTRA.md"), repo="myrepo") == []
+    # The deleted doc's chunks are gone from the documents collection.
+    assert store.get_by_ids("documents", extra_chunks).ids == []

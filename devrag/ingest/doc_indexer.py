@@ -133,6 +133,7 @@ class DocIndexer:
         self.doc_config = config.documents
 
     def index_docs(self, docs_path: Path, glob_patterns: list[str] | None = None, incremental: bool = True) -> DocIndexStats:
+        """Index a standalone directory of documents (repo-agnostic, glob-discovered)."""
         stats = DocIndexStats()
         if glob_patterns is None:
             glob_patterns = self.doc_config.glob_patterns
@@ -149,32 +150,90 @@ class DocIndexer:
         stats.files_scanned = len(unique_files)
 
         for file_path in unique_files:
-            rel_path = str(file_path)
-            content_hash = hashlib.sha256(file_path.read_bytes()).hexdigest()
-            if incremental:
-                stored_hash = self.metadata_db.get_file_hash(rel_path)
-                if stored_hash == content_hash:
-                    continue
-            self.metadata_db.set_file_hash(rel_path, content_hash)
-            old_chunk_ids = self.metadata_db.get_chunks_for_file(rel_path)
+            self._index_doc_file(file_path, repo="", incremental=incremental, stats=stats)
+        return stats
+
+    def index_repo_docs(
+        self,
+        repo_path: Path,
+        repo_name: str,
+        incremental: bool = True,
+        exclude_patterns: list[str] | None = None,
+    ) -> DocIndexStats:
+        """Index a code repo's docs into the ``documents`` collection, tagged with *repo_name*.
+
+        Uses the same gitignore/.devragignore-aware discovery as ``CodeIndexer`` and
+        applies the full per-repo lifecycle: incremental skip, repo-scoped removal of
+        deleted docs, and a ``repo`` tag on every chunk. Doc rows share the
+        ``(repo, file_path)`` namespace in MetadataDB with code rows; removal here is
+        scoped to ``DOC_EXTENSIONS`` so it never touches the repo's code files.
+        """
+        from devrag.ingest.code_indexer import _DEFAULT_EXCLUDE
+        from devrag.utils.git import discover_files
+
+        stats = DocIndexStats()
+        exclude = list(exclude_patterns or []) + _DEFAULT_EXCLUDE
+        files = discover_files(repo_path, exclude_patterns=exclude)
+        doc_files = [f for f in files if f.suffix.lower() in DOC_EXTENSIONS]
+        stats.files_scanned = len(doc_files)
+
+        current_paths = {str(f) for f in doc_files}
+
+        # Detect removed docs — scoped to this repo and to doc extensions only, so the
+        # repo's code files (sharing the same repo namespace) are never deleted here.
+        previously_indexed = set(self.metadata_db.get_indexed_files_for_repo(repo_name))
+        removed = {
+            p for p in previously_indexed if Path(p).suffix.lower() in DOC_EXTENSIONS
+        } - current_paths
+        for removed_path in removed:
+            old_chunk_ids = self.metadata_db.get_chunks_for_file(removed_path, repo=repo_name)
             if old_chunk_ids:
                 self.vector_store.delete("documents", old_chunk_ids)
-            text = file_path.read_text(errors="replace")
-            chunks = chunk_document(text=text, file_path=rel_path,
-                                     max_tokens=self.doc_config.chunk_max_tokens,
-                                     overlap_tokens=self.doc_config.chunk_overlap_tokens)
-            if not chunks:
-                stats.files_indexed += 1
-                continue
-            texts = [c.text for c in chunks]
-            embeddings = self.embedder.embed(texts)
-            sparse_embeddings = self.sparse_encoder.encode(texts)
-            self.vector_store.upsert(collection="documents", ids=[c.id for c in chunks],
-                                      embeddings=embeddings, documents=texts,
-                                      metadatas=[c.metadata for c in chunks],
-                                      sparse_embeddings=sparse_embeddings, wait=False)
-            for chunk in chunks:
-                self.metadata_db.set_chunk_source(chunk.id, rel_path, 0, 0)
-            stats.files_indexed += 1
-            stats.chunks_created += len(chunks)
+            self.metadata_db.remove_file(removed_path, repo=repo_name)
+            stats.files_removed += 1
+
+        for file_path in doc_files:
+            self._index_doc_file(file_path, repo=repo_name, incremental=incremental, stats=stats)
         return stats
+
+    def _index_doc_file(self, file_path: Path, repo: str, incremental: bool, stats: DocIndexStats) -> None:
+        """Index a single doc file into ``documents``, updating *stats* in place.
+
+        Shared by ``index_docs`` (repo="") and ``index_repo_docs`` (repo=<name>).
+        """
+        rel_path = str(file_path)
+        content_hash = hashlib.sha256(file_path.read_bytes()).hexdigest()
+        if incremental:
+            stored_hash = self.metadata_db.get_file_hash(rel_path, repo=repo)
+            if stored_hash == content_hash:
+                stats.files_skipped += 1
+                return
+
+        # Drop old chunks for this file first (handles re-indexing of changed files).
+        old_chunk_ids = self.metadata_db.get_chunks_for_file(rel_path, repo=repo)
+        if old_chunk_ids:
+            self.vector_store.delete("documents", old_chunk_ids)
+            self.metadata_db.remove_file(rel_path, repo=repo)
+        self.metadata_db.set_file_hash(rel_path, content_hash, repo=repo)
+
+        text = file_path.read_text(errors="replace")
+        chunks = chunk_document(text=text, file_path=rel_path,
+                                 max_tokens=self.doc_config.chunk_max_tokens,
+                                 overlap_tokens=self.doc_config.chunk_overlap_tokens)
+        if not chunks:
+            stats.files_indexed += 1
+            return
+        if repo:
+            for chunk in chunks:
+                chunk.metadata["repo"] = repo
+        texts = [c.text for c in chunks]
+        embeddings = self.embedder.embed(texts)
+        sparse_embeddings = self.sparse_encoder.encode(texts)
+        self.vector_store.upsert(collection="documents", ids=[c.id for c in chunks],
+                                  embeddings=embeddings, documents=texts,
+                                  metadatas=[c.metadata for c in chunks],
+                                  sparse_embeddings=sparse_embeddings, wait=False)
+        for chunk in chunks:
+            self.metadata_db.set_chunk_source(chunk.id, rel_path, 0, 0, repo=repo)
+        stats.files_indexed += 1
+        stats.chunks_created += len(chunks)

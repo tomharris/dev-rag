@@ -86,14 +86,19 @@ The query router automatically classifies intent and targets relevant collection
 ### Indexing
 
 ```bash
-# Code (AST-aware, incremental by default)
-devrag index repo .                        # Current directory
+# Code (AST-aware, incremental by default; also indexes the repo's docs)
+devrag index repo .                        # Current directory (code + docs)
 devrag index repo /path/to/repo            # Specific path
 devrag index repo . --full                 # Force full re-index
 devrag index repo . --name my-repo         # Name for multi-repo support
-devrag index remove-repo my-repo           # Remove a repo from the index
+devrag index repo . --no-docs              # Code only, skip the repo's docs
+devrag index remove-repo my-repo           # Remove a repo from the index (code + docs)
 
-# Documents (section-aware splitting)
+# `index repo` also indexes the repo's own docs (md/mdx/txt/rst/html/adoc) into
+# the documents collection, tagged with the repo name (so `search --repo <name>`
+# narrows to them). Use `index docs` below only for a standalone docs tree.
+
+# Documents (section-aware splitting; standalone directory, not tied to a repo)
 devrag index docs ./specs                  # Default: **/*.md
 devrag index docs ./docs --glob "**/*.txt,**/*.rst"
 
@@ -195,8 +200,8 @@ Code indexing is **incremental** — file content hashes are tracked in SQLite, 
 ```bash
 devrag status                              # Show index stats
 devrag serve                               # Start MCP server for Claude Code
-devrag reindex --all                       # Clear all indexes and re-embed code repos (re-sync PRs/issues/Jira/Slite/Slack manually)
-devrag reindex --name my_project           # Re-index a single repo (preserves other repos and external sources)
+devrag reindex --all                       # Clear all indexes and re-embed code repos + their docs (re-sync PRs/issues/Jira/Slite/Slack manually)
+devrag reindex --name my_project           # Re-index a single repo's code + docs (preserves other repos and external sources)
 devrag config set embedding.model nomic-embed-text
 devrag config get vector_store.backend
 ```

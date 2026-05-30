@@ -22,7 +22,7 @@ from devrag.retrieve.reranker import Reranker
 from devrag.stores.qdrant_store import QdrantStore
 from devrag.stores.metadata_db import MetadataDB
 from devrag.utils.git import infer_repo
-from devrag.utils.formatters import format_doc_index_stats, format_index_stats, format_issue_sync_stats, format_jira_sync_stats, format_pr_sync_stats, format_search_results, format_session_sync_stats, format_slack_sync_stats, format_slite_sync_stats
+from devrag.utils.formatters import format_doc_index_stats, format_index_stats, format_issue_sync_stats, format_jira_sync_stats, format_pr_sync_stats, format_repo_doc_stats, format_search_results, format_session_sync_stats, format_slack_sync_stats, format_slite_sync_stats
 from devrag.utils.github import GitHubClient
 from devrag.utils.jira_client import JiraClient
 from devrag.utils.slack_client import SlackClient
@@ -176,12 +176,13 @@ def search(
 
 
 @mcp.tool
-def index_repo(path: str = ".", incremental: bool = True, name: str = "") -> str:
+def index_repo(path: str = ".", incremental: bool = True, name: str = "", with_docs: bool = True) -> str:
     """Index a local code repository using AST-aware chunking.
 
     Parses source files with tree-sitter, extracts functions/classes/methods,
     and stores embeddings for semantic search. Uses incremental indexing
-    to skip unchanged files.
+    to skip unchanged files. By default also indexes the repo's docs
+    (md/txt/rst/…) into the documents collection, tagged with the repo name.
 
     Multiple repos can be indexed — each is tracked independently.
 
@@ -189,19 +190,35 @@ def index_repo(path: str = ".", incremental: bool = True, name: str = "") -> str
         path: Path to the repository root.
         incremental: Skip unchanged files (default True).
         name: Repo name for multi-repo support (default: directory name).
+        with_docs: Also index the repo's docs into the documents collection (default True).
     """
     repo_path = Path(path).resolve()
     if not repo_path.exists():
         return f"Error: path '{path}' does not exist."
+    config = _get_config()
     indexer = CodeIndexer(
         store=_get_vector_store(),
         meta=_get_metadata_db(),
         embedder=_get_embedder(),
         sparse_encoder=_get_sparse_encoder(),
-        config=_get_config().code,
+        config=config.code,
     )
     stats = indexer.index_repo(repo_path, incremental=incremental, repo_name=name)
-    return format_index_stats(stats)
+    out = format_index_stats(stats)
+    if with_docs and config.code.index_docs:
+        doc_indexer = DocIndexer(
+            vector_store=_get_vector_store(),
+            metadata_db=_get_metadata_db(),
+            embedder=_get_embedder(),
+            sparse_encoder=_get_sparse_encoder(),
+            config=config,
+        )
+        doc_stats = doc_indexer.index_repo_docs(
+            repo_path, repo_name=name or repo_path.name, incremental=incremental,
+            exclude_patterns=config.code.exclude_patterns,
+        )
+        out += "\n" + format_repo_doc_stats(doc_stats)
+    return out
 
 
 @mcp.tool

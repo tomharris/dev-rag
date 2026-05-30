@@ -313,3 +313,40 @@ def test_code_indexer_detects_removed_files(tmp_dir, indexer_deps):
     stats = indexer.index_repo(repo)
     assert stats.files_removed >= 1
     assert store.count("code_chunks") < initial_count
+
+
+def test_code_and_docs_coexist_without_cross_deletion(tmp_dir, indexer_deps):
+    """Code and docs share the (repo, file_path) namespace; neither indexer's
+    removed-file detection may delete the other's rows."""
+    import subprocess
+
+    from devrag.ingest.doc_indexer import DocIndexer
+
+    store, meta, embedder, sparse_encoder = indexer_deps
+    repo = tmp_dir / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", str(repo)], capture_output=True, check=True)
+    subprocess.run(["git", "config", "user.email", "t@t.com"], cwd=str(repo), capture_output=True)
+    subprocess.run(["git", "config", "user.name", "T"], cwd=str(repo), capture_output=True)
+    (repo / "main.py").write_text("def hello():\n    return 'world'\n")
+    (repo / "README.md").write_text("# Project\n\nDocs here.\n")
+
+    code = CodeIndexer(store, meta, embedder, sparse_encoder)
+    docs = DocIndexer(store, meta, embedder, sparse_encoder)
+
+    code.index_repo(repo, repo_name="r")
+    docs.index_repo_docs(repo, repo_name="r")
+
+    readme_chunks = meta.get_chunks_for_file(str(repo / "README.md"), repo="r")
+    main_chunks = meta.get_chunks_for_file(str(repo / "main.py"), repo="r")
+    assert readme_chunks and main_chunks
+
+    # Re-running the code indexer must NOT see README.md as a removed code file.
+    stats = code.index_repo(repo, incremental=True, repo_name="r")
+    assert stats.files_removed == 0
+    assert meta.get_chunks_for_file(str(repo / "README.md"), repo="r") == readme_chunks
+
+    # Re-running the doc indexer must NOT see main.py as a removed doc file.
+    doc_stats = docs.index_repo_docs(repo, repo_name="r", incremental=True)
+    assert doc_stats.files_removed == 0
+    assert meta.get_chunks_for_file(str(repo / "main.py"), repo="r") == main_chunks
