@@ -158,19 +158,26 @@ def format_index_stats(stats: IndexStats) -> str:
     ]
     if stats.files_empty:
         parts.append(f"{stats.files_empty} files produced no chunks")
+    if stats.files_failed:
+        parts.append(f"{stats.files_failed} files failed (see logs)")
     if stats.files_removed:
         parts.append(f"Removed {stats.files_removed} deleted files")
     return ". ".join(parts) + "."
 
 
 def format_doc_index_stats(stats: DocIndexStats) -> str:
-    return f"Scanned {stats.files_scanned} files. Indexed {stats.files_indexed} files ({stats.chunks_created} chunks)."
+    out = f"Scanned {stats.files_scanned} files. Indexed {stats.files_indexed} files ({stats.chunks_created} chunks)."
+    if stats.files_failed:
+        out += f" {stats.files_failed} files failed (see logs)."
+    return out
 
 
 def format_repo_doc_stats(stats: DocIndexStats) -> str:
     parts = [f"Docs: indexed {stats.files_indexed} ({stats.chunks_created} chunks)"]
     if stats.files_skipped:
         parts.append(f"skipped {stats.files_skipped} unchanged")
+    if stats.files_failed:
+        parts.append(f"{stats.files_failed} failed")
     if stats.files_removed:
         parts.append(f"removed {stats.files_removed} deleted")
     return ", ".join(parts) + "."

@@ -1,8 +1,11 @@
 from __future__ import annotations
 import hashlib
+import logging
 import re
 from pathlib import Path
 from devrag.types import Chunk, DocIndexStats
+
+logger = logging.getLogger(__name__)
 
 CHARS_PER_TOKEN = 4
 DOC_EXTENSIONS: dict[str, str] = {
@@ -150,7 +153,7 @@ class DocIndexer:
         stats.files_scanned = len(unique_files)
 
         for file_path in unique_files:
-            self._index_doc_file(file_path, repo="", incremental=incremental, stats=stats)
+            self._safe_index_doc_file(file_path, repo="", incremental=incremental, stats=stats)
         return stats
 
     def index_repo_docs(
@@ -193,8 +196,23 @@ class DocIndexer:
             stats.files_removed += 1
 
         for file_path in doc_files:
-            self._index_doc_file(file_path, repo=repo_name, incremental=incremental, stats=stats)
+            self._safe_index_doc_file(file_path, repo=repo_name, incremental=incremental, stats=stats)
         return stats
+
+    def _safe_index_doc_file(self, file_path: Path, repo: str, incremental: bool, stats: DocIndexStats) -> None:
+        """Index one doc file, isolating failures so one bad file can't abort the run.
+
+        A single oversized/unembeddable file (e.g. an embed 400) is logged and
+        counted in ``stats.files_failed`` rather than propagating — important for
+        ``index refresh``, where an exception would skip every later repo. Because
+        ``_index_doc_file`` persists the file hash only after a successful upsert,
+        a failed file is retried (not silently skipped) on the next run.
+        """
+        try:
+            self._index_doc_file(file_path, repo=repo, incremental=incremental, stats=stats)
+        except Exception as exc:
+            stats.files_failed += 1
+            logger.warning("Failed to index doc %s: %s", file_path, exc)
 
     def _index_doc_file(self, file_path: Path, repo: str, incremental: bool, stats: DocIndexStats) -> None:
         """Index a single doc file into ``documents``, updating *stats* in place.
@@ -214,13 +232,14 @@ class DocIndexer:
         if old_chunk_ids:
             self.vector_store.delete("documents", old_chunk_ids)
             self.metadata_db.remove_file(rel_path, repo=repo)
-        self.metadata_db.set_file_hash(rel_path, content_hash, repo=repo)
 
         text = file_path.read_text(errors="replace")
         chunks = chunk_document(text=text, file_path=rel_path,
                                  max_tokens=self.doc_config.chunk_max_tokens,
                                  overlap_tokens=self.doc_config.chunk_overlap_tokens)
         if not chunks:
+            # Record the hash so an empty file is skipped next run.
+            self.metadata_db.set_file_hash(rel_path, content_hash, repo=repo)
             stats.files_indexed += 1
             return
         if repo:
@@ -235,5 +254,8 @@ class DocIndexer:
                                   sparse_embeddings=sparse_embeddings, wait=False)
         for chunk in chunks:
             self.metadata_db.set_chunk_source(chunk.id, rel_path, 0, 0, repo=repo)
+        # Persist the hash only after a successful upsert, so a file that fails
+        # to embed is retried on the next run rather than marked done.
+        self.metadata_db.set_file_hash(rel_path, content_hash, repo=repo)
         stats.files_indexed += 1
         stats.chunks_created += len(chunks)

@@ -509,30 +509,38 @@ class CodeIndexer:
             self._remove_file(removed_path, repo=repo_name)
             stats.files_removed += 1
 
-        # Index / skip each file
+        # Index / skip each file. A single file's failure (e.g. an embed 400 on
+        # an oversized chunk) is logged and counted, not propagated — otherwise
+        # one bad file aborts the whole repo, and under `index refresh` every
+        # later repo too. _index_chunks persists the file hash only after a
+        # successful upsert, so a failed file is retried on the next run.
         for file_path in supported_files:
             str_path = str(file_path)
-            file_hash = self._hash_file(file_path)
+            try:
+                file_hash = self._hash_file(file_path)
 
-            if incremental:
-                stored_hash = self._meta.get_file_hash(str_path, repo=repo_name)
-                if stored_hash == file_hash:
-                    stats.files_skipped += 1
+                if incremental:
+                    stored_hash = self._meta.get_file_hash(str_path, repo=repo_name)
+                    if stored_hash == file_hash:
+                        stats.files_skipped += 1
+                        continue
+
+                chunks = extract_chunks_from_file(
+                    file_path,
+                    max_tokens=self._config.chunk_max_tokens,
+                    repo_name=repo_name,
+                )
+                if not chunks:
+                    stats.files_empty += 1
+                    logger.info("No chunks extracted from %s", file_path)
                     continue
 
-            chunks = extract_chunks_from_file(
-                file_path,
-                max_tokens=self._config.chunk_max_tokens,
-                repo_name=repo_name,
-            )
-            if not chunks:
-                stats.files_empty += 1
-                logger.info("No chunks extracted from %s", file_path)
-                continue
-
-            self._index_chunks(chunks, str_path, file_hash, repo=repo_name)
-            stats.files_indexed += 1
-            stats.chunks_created += len(chunks)
+                self._index_chunks(chunks, str_path, file_hash, repo=repo_name)
+                stats.files_indexed += 1
+                stats.chunks_created += len(chunks)
+            except Exception as exc:
+                stats.files_failed += 1
+                logger.warning("Failed to index %s: %s", file_path, exc)
 
         return stats
 

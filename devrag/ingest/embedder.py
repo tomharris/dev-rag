@@ -52,7 +52,11 @@ class OllamaEmbedder:
             batch = non_empty_texts[i : i + self.batch_size]
             response = httpx.post(
                 f"{self.ollama_url}/api/embed",
-                json={"model": self.model, "input": batch},
+                # truncate=True tells Ollama to clip each input to the model's
+                # context window instead of returning a 400. Our char-based
+                # _truncate is only a heuristic pre-trim (chars/token varies);
+                # this is the authoritative, token-accurate safety net.
+                json={"model": self.model, "input": batch, "truncate": True},
                 timeout=120.0,
             )
             if not response.is_success:
