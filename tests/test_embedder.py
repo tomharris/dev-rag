@@ -56,6 +56,27 @@ def test_embed_large_batch_splits_requests():
 
 
 @respx.mock
+def test_embed_requests_server_side_truncation():
+    """Each /api/embed request asks Ollama to truncate oversized inputs.
+
+    Without truncate=True, Ollama returns a 400 ("input length exceeds the
+    context length") when a chunk overflows the model context — which would
+    otherwise abort the whole indexing run.
+    """
+    captured = {}
+
+    def handler(request):
+        import json
+        captured["body"] = json.loads(request.content.decode())
+        return httpx.Response(200, json={"model": "nomic-embed-text", "embeddings": [[0.1]]})
+
+    respx.post("http://localhost:11434/api/embed").mock(side_effect=handler)
+    embedder = OllamaEmbedder(model="nomic-embed-text", ollama_url="http://localhost:11434")
+    embedder.embed(["some text"])
+    assert captured["body"]["truncate"] is True
+
+
+@respx.mock
 def test_embed_query():
     respx.post("http://localhost:11434/api/embed").respond(json={
         "model": "nomic-embed-text",

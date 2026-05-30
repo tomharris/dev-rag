@@ -38,6 +38,7 @@ class IndexStats:
     files_skipped: int = 0
     files_removed: int = 0
     files_empty: int = 0
+    files_failed: int = 0
     chunks_created: int = 0
 
 
@@ -48,6 +49,7 @@ class DocIndexStats:
     files_indexed: int = 0
     files_skipped: int = 0
     files_removed: int = 0
+    files_failed: int = 0
     chunks_created: int = 0
 
 

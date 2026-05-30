@@ -157,3 +157,58 @@ def test_index_repo_docs_removes_deleted_doc(tmp_dir, repo_doc_deps):
     assert meta.get_chunks_for_file(str(repo / "EXTRA.md"), repo="myrepo") == []
     # The deleted doc's chunks are gone from the documents collection.
     assert store.get_by_ids("documents", extra_chunks).ids == []
+
+
+def test_index_repo_docs_isolates_failing_file(tmp_dir, repo_doc_deps):
+    """One file that fails to embed is counted and skipped, not fatal — and the
+    other files in the same repo still get indexed."""
+    store, meta, embedder, sparse_encoder = repo_doc_deps
+    repo = tmp_dir / "repo"
+    repo.mkdir()
+    _git_init(repo)
+    (repo / "GOOD.md").write_text("# Good\n\nThis indexes fine.\n")
+    (repo / "BAD.md").write_text("# Bad\n\nThis one explodes on embed.\n")
+
+    def embed(texts):
+        if any("explodes" in t for t in texts):
+            raise RuntimeError("Ollama embed failed (400): input length exceeds context length")
+        return [[0.1] * 768 for _ in texts]
+
+    embedder.embed = MagicMock(side_effect=embed)
+    indexer = DocIndexer(store, meta, embedder, sparse_encoder)
+    stats = indexer.index_repo_docs(repo, repo_name="myrepo")
+
+    assert stats.files_failed == 1
+    assert stats.files_indexed == 1  # GOOD.md still got in
+    assert meta.get_chunks_for_file(str(repo / "GOOD.md"), repo="myrepo")
+
+
+def test_failed_file_is_retried_not_skipped(tmp_dir, repo_doc_deps):
+    """A file whose embed fails must NOT have its hash persisted, so the next
+    incremental run retries it instead of treating it as done."""
+    store, meta, embedder, sparse_encoder = repo_doc_deps
+    repo = tmp_dir / "repo"
+    repo.mkdir()
+    _git_init(repo)
+    (repo / "FLAKY.md").write_text("# Flaky\n\nFails the first time only.\n")
+
+    calls = {"n": 0}
+
+    def embed(texts):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("transient embed failure")
+        return [[0.1] * 768 for _ in texts]
+
+    embedder.embed = MagicMock(side_effect=embed)
+    indexer = DocIndexer(store, meta, embedder, sparse_encoder)
+
+    s1 = indexer.index_repo_docs(repo, repo_name="myrepo")
+    assert s1.files_failed == 1
+    assert meta.get_file_hash(str(repo / "FLAKY.md"), repo="myrepo") is None
+
+    # Second incremental run retries (hash was never stored) and succeeds.
+    s2 = indexer.index_repo_docs(repo, repo_name="myrepo", incremental=True)
+    assert s2.files_indexed == 1
+    assert s2.files_skipped == 0
+    assert meta.get_chunks_for_file(str(repo / "FLAKY.md"), repo="myrepo")

@@ -158,6 +158,36 @@ def test_code_indexer_incremental_skips_unchanged(tmp_dir, indexer_deps):
     embedder.embed.assert_not_called()
 
 
+def test_code_indexer_isolates_failing_file(tmp_dir, indexer_deps):
+    """One file that fails to embed is counted and skipped, not fatal — the rest
+    of the repo still indexes, and the failed file is retried next run (no hash
+    persisted)."""
+    store, meta, embedder, sparse_encoder = indexer_deps
+    repo = tmp_dir / "repo"
+    repo.mkdir()
+    import subprocess
+    subprocess.run(["git", "init", str(repo)], capture_output=True, check=True)
+    subprocess.run(["git", "config", "user.email", "t@t.com"], cwd=str(repo), capture_output=True)
+    subprocess.run(["git", "config", "user.name", "T"], cwd=str(repo), capture_output=True)
+    (repo / "good.py").write_text("def hello():\n    return 'world'\n")
+    (repo / "bad.py").write_text("def explode():\n    return 'boom'\n")
+    subprocess.run(["git", "add", "."], cwd=str(repo), capture_output=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=str(repo), capture_output=True)
+
+    def embed(texts):
+        if any("boom" in t for t in texts):
+            raise RuntimeError("Ollama embed failed (400): input length exceeds context length")
+        return [[0.1] * 768 for _ in texts]
+
+    embedder.embed = MagicMock(side_effect=embed)
+    indexer = CodeIndexer(store, meta, embedder, sparse_encoder)
+    stats = indexer.index_repo(repo)
+
+    assert stats.files_failed == 1
+    assert stats.files_indexed >= 1  # good.py still indexed
+    assert meta.get_file_hash(str(repo / "bad.py"), repo=repo.name) is None  # retried next run
+
+
 def test_extract_chunks_skips_empty_text_nodes(tmp_dir):
     """Nodes whose source text is empty/whitespace-only should be excluded."""
     code = "def foo():\n    return 1\n\ndef bar():\n    return 2\n"
