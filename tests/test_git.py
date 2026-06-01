@@ -64,6 +64,44 @@ def test_discover_files_respects_devragignore(git_repo):
     assert "src/data.min.js" not in rel_paths
 
 
+def test_devragignore_excludes_directory_pattern(git_repo):
+    """A gitignore-style directory pattern excludes everything beneath it."""
+    (git_repo / "docs").mkdir()
+    (git_repo / "docs" / "internal").mkdir()
+    (git_repo / "docs" / "internal" / "secret.md").write_text("# secret")
+    (git_repo / "docs" / "public.md").write_text("# public")
+    (git_repo / ".devragignore").write_text("docs/internal/\n")
+    files = discover_files(git_repo, exclude_patterns=[])
+    rel_paths = {str(f.relative_to(git_repo)) for f in files}
+    assert "docs/public.md" in rel_paths
+    assert "docs/internal/secret.md" not in rel_paths
+
+
+def test_devragignore_excludes_bare_dir_name_at_any_depth(git_repo):
+    """A bare directory name matches that directory anywhere in the tree."""
+    (git_repo / "a" / "internal").mkdir(parents=True)
+    (git_repo / "a" / "internal" / "x.py").write_text("x = 1")
+    (git_repo / "a" / "keep.py").write_text("y = 2")
+    (git_repo / ".devragignore").write_text("internal/\n")
+    files = discover_files(git_repo, exclude_patterns=[])
+    rel_paths = {str(f.relative_to(git_repo)) for f in files}
+    assert "a/keep.py" in rel_paths
+    assert "a/internal/x.py" not in rel_paths
+
+
+def test_devragignore_supports_negation(git_repo):
+    """A later `!pattern` re-includes a path excluded by an earlier pattern."""
+    (git_repo / "notes.md").write_text("# notes")
+    (git_repo / "KEEP.md").write_text("# keep")
+    (git_repo / ".devragignore").write_text("*.md\n!KEEP.md\n")
+    files = discover_files(git_repo, exclude_patterns=[])
+    rel_paths = {str(f.relative_to(git_repo)) for f in files}
+    assert "KEEP.md" in rel_paths
+    assert "notes.md" not in rel_paths
+    # README.md (committed by the fixture) is still excluded by `*.md`.
+    assert "README.md" not in rel_paths
+
+
 def test_infer_repo_matches_cwd_under_repo():
     repos = [("repo-a", "/home/u/Projects/repo-a"), ("repo-b", "/home/u/Projects/repo-b")]
     assert infer_repo(Path("/home/u/Projects/repo-b/src/app"), repos) == "repo-b"

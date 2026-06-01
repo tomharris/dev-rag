@@ -433,7 +433,7 @@ documents:
 
 ### File Exclusion
 
-DevRAG respects `.gitignore` by default. For additional exclusions specific to the index, create a `.devragignore` file (same syntax as `.gitignore`).
+DevRAG respects `.gitignore` by default. For additional exclusions specific to the index, create a `.devragignore` file. It uses full `.gitignore` syntax — directory patterns (`docs/internal/`), anchoring, `**`, and `!` negation all work — and applies to both code and docs indexing. Unlike `.gitignore`, it can also exclude files that are tracked by git.
 
 ## Deployment Modes
 
