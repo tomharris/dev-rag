@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-import fnmatch
 import subprocess
 from pathlib import Path
+
+import pathspec
 
 
 def infer_repo(cwd: Path, repos: list[tuple[str, str]]) -> str:
@@ -30,7 +31,9 @@ def discover_files(
     if not repo_path.exists():
         return []
 
-    # Read .devragignore patterns
+    # Read .devragignore patterns. These use real gitignore syntax (directories,
+    # anchoring, `**`, and `!` negation) — evaluated below via pathspec.GitIgnoreSpec,
+    # not fnmatch (which silently ignored directory patterns like `docs/internal/`).
     devragignore = repo_path / ".devragignore"
     extra_excludes: list[str] = []
     if devragignore.exists():
@@ -38,7 +41,9 @@ def discover_files(
             line = line.strip()
             if line and not line.startswith("#"):
                 extra_excludes.append(line)
-    all_excludes = list(exclude_patterns) + extra_excludes
+    # Caller-supplied globs first, then .devragignore lines, so a user can re-include
+    # a path with `!pattern` in .devragignore (later patterns win in gitignore).
+    spec = pathspec.GitIgnoreSpec.from_lines(list(exclude_patterns) + extra_excludes)
 
     try:
         result = subprocess.run(
@@ -58,8 +63,7 @@ def discover_files(
 
     filtered: list[Path] = []
     for rel in rel_paths:
-        if any(fnmatch.fnmatch(rel, pat) or fnmatch.fnmatch(Path(rel).name, pat)
-               for pat in all_excludes):
+        if spec.match_file(rel):
             continue
         full = repo_path / rel
         if full.is_file():
