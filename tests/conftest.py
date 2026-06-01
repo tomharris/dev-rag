@@ -36,6 +36,34 @@ def sparse_encoder():
 
 
 @pytest.fixture
+def frozen_now(monkeypatch):
+    """Freeze "now" in the PR/issue/Jira sync indexers to a fixed instant.
+
+    These indexers derive a lookback floor (``now - since_days``) and skip items
+    older than it. The test fixtures use hardcoded dates around 2026-03-02, so
+    without a frozen clock the tests rot the moment wall-clock time drifts past
+    ``fixture_date + since_days`` (the item falls outside the window and is
+    skipped / the Jira cursor collapses to the floor). Freezing to 2026-03-10 —
+    just after the fixtures' dates — keeps a 90-day window inclusive of them
+    forever.
+
+    Subclassing ``datetime`` and overriding ``now`` is the dependency-free way to
+    freeze time: arithmetic with ``timedelta`` and ``.isoformat()`` still work
+    because the returned value is a real ``datetime``.
+    """
+    from datetime import datetime, timezone
+
+    class _FrozenDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime(2026, 3, 10, tzinfo=tz or timezone.utc)
+
+    for module in ("pr_indexer", "issue_indexer", "jira_indexer"):
+        monkeypatch.setattr(f"devrag.ingest.{module}.datetime", _FrozenDateTime)
+    return _FrozenDateTime
+
+
+@pytest.fixture
 def sample_python_file(tmp_dir):
     code = '''"""Module docstring."""
 
