@@ -72,7 +72,7 @@ def test_chunk_issue_truncation():
     assert desc_chunks[0].text.endswith("# ... (truncated)")
 
 
-def test_issue_indexer_sync(tmp_dir, sparse_encoder):
+def test_issue_indexer_sync(tmp_dir, sparse_encoder, frozen_now):
     from devrag.stores.qdrant_store import QdrantStore
     from devrag.stores.metadata_db import MetadataDB
     store = QdrantStore(path=str(tmp_dir / "qdrant"), embedding_dim=768)
@@ -98,7 +98,7 @@ def test_issue_indexer_sync(tmp_dir, sparse_encoder):
     assert cursor is not None
 
 
-def test_issue_indexer_incremental_sync(tmp_dir, sparse_encoder):
+def test_issue_indexer_incremental_sync(tmp_dir, sparse_encoder, frozen_now):
     from devrag.stores.qdrant_store import QdrantStore
     from devrag.stores.metadata_db import MetadataDB
     store = QdrantStore(path=str(tmp_dir / "qdrant"), embedding_dim=768)
@@ -123,7 +123,7 @@ def test_issue_indexer_incremental_sync(tmp_dir, sparse_encoder):
     assert call_kwargs.kwargs.get("since") == first_cursor or call_kwargs[1].get("since") == first_cursor
 
 
-def test_issue_indexer_include_labels(tmp_dir, sparse_encoder):
+def test_issue_indexer_include_labels(tmp_dir, sparse_encoder, frozen_now):
     from devrag.stores.qdrant_store import QdrantStore
     from devrag.stores.metadata_db import MetadataDB
     store = QdrantStore(path=str(tmp_dir / "qdrant"), embedding_dim=768)
@@ -143,7 +143,7 @@ def test_issue_indexer_include_labels(tmp_dir, sparse_encoder):
     assert stats.issues_skipped == 1  # #2 (enhancement only)
 
 
-def test_issue_indexer_exclude_labels(tmp_dir, sparse_encoder):
+def test_issue_indexer_exclude_labels(tmp_dir, sparse_encoder, frozen_now):
     from devrag.stores.qdrant_store import QdrantStore
     from devrag.stores.metadata_db import MetadataDB
     store = QdrantStore(path=str(tmp_dir / "qdrant"), embedding_dim=768)
@@ -163,7 +163,7 @@ def test_issue_indexer_exclude_labels(tmp_dir, sparse_encoder):
     assert stats.issues_skipped == 2  # #2 and #3
 
 
-def test_issue_indexer_include_and_exclude_labels(tmp_dir, sparse_encoder):
+def test_issue_indexer_include_and_exclude_labels(tmp_dir, sparse_encoder, frozen_now):
     from devrag.stores.qdrant_store import QdrantStore
     from devrag.stores.metadata_db import MetadataDB
     store = QdrantStore(path=str(tmp_dir / "qdrant"), embedding_dim=768)

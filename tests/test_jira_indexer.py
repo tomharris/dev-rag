@@ -284,7 +284,7 @@ def test_jira_indexer_recovers_from_stale_iso_cursor(tmp_dir, sparse_encoder):
     assert 'updated >= "2026/03/02 12:00"' in effective_jql
 
 
-def test_jira_indexer_stored_cursor_is_valid_jql_format(tmp_dir, sparse_encoder):
+def test_jira_indexer_stored_cursor_is_valid_jql_format(tmp_dir, sparse_encoder, frozen_now):
     """Regression: cursor must be stored in JQL datetime format, not raw ISO from Jira API.
     If this fails, the next sync's JQL clause will be malformed and incremental sync won't work."""
     from devrag.stores.qdrant_store import QdrantStore

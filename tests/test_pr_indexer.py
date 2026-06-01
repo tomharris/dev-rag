@@ -74,7 +74,7 @@ def test_chunk_ids_are_deterministic():
     assert [c.id for c in chunks1] == [c.id for c in chunks2]
 
 
-def test_pr_indexer_sync(tmp_dir, sparse_encoder):
+def test_pr_indexer_sync(tmp_dir, sparse_encoder, frozen_now):
     from devrag.stores.qdrant_store import QdrantStore
     from devrag.stores.metadata_db import MetadataDB
     store = QdrantStore(path=str(tmp_dir / "qdrant"), embedding_dim=768)
@@ -115,7 +115,7 @@ def test_pr_indexer_uses_cursor_when_since_days_none(tmp_dir, sparse_encoder):
     assert call_kwargs.get("since") == "2026-03-15T10:00:00Z"
 
 
-def test_pr_indexer_since_days_overrides_cursor(tmp_dir, sparse_encoder):
+def test_pr_indexer_since_days_overrides_cursor(tmp_dir, sparse_encoder, frozen_now):
     from devrag.stores.qdrant_store import QdrantStore
     from devrag.stores.metadata_db import MetadataDB
     store = QdrantStore(path=str(tmp_dir / "qdrant"), embedding_dim=768)
