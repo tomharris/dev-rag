@@ -1,59 +1,111 @@
 import sys
 import types
 
-import httpx
 import pytest
-import respx
 from typer.testing import CliRunner
 
 from devrag.cli import app
 from devrag.utils import slack_auth
 from devrag.utils.slack_auth import (
-    derive_xoxc_token,
     read_d_cookie,
     read_d_cookie_from_slack_app,
+    read_xoxc_token_from_slack_app,
 )
 from devrag.utils.slack_client import SlackAuthError
 
 runner = CliRunner()
 
-# A boot page with a decoy `xoxc-` placeholder *before* the real boot_data, so a
-# naive first-match regex would grab the wrong one — the JSON-parse path must read
-# the keyed api_token instead.
-BOOT_HTML = (
-    '<html><script>var example_token = "xoxc-000-decoy-placeholder";</script>'
-    '<script>var boot_data = {"team_id":"T1","api_token":"xoxc-111-222-realtoken"};'
-    '</script></html>'
-)
+
+# --- token reading (localStorage / LevelDB) ---------------------------------
+#
+# Slack no longer inlines the xoxc token in any web page; it lives in the desktop
+# app's localConfig_v2 localStorage value, read from its Chromium LevelDB store.
+
+def test_token_for_workspace_matches_domain_case_insensitively():
+    teams = {
+        "T1": {"domain": "bamboohr", "url": "https://bamboohr.slack.com/", "token": "xoxc-AAA"},
+        "T2": {"domain": "other", "url": "https://other.slack.com/", "token": "xoxc-BBB"},
+    }
+    assert slack_auth._token_for_workspace(teams, "bamboohr") == "xoxc-AAA"
+    assert slack_auth._token_for_workspace(teams, "BambooHR") == "xoxc-AAA"
+    assert slack_auth._token_for_workspace(teams, "other") == "xoxc-BBB"
 
 
-# --- token derivation -------------------------------------------------------
+def test_token_for_workspace_matches_url_when_domain_absent():
+    teams = {"T1": {"url": "https://bamboohr.slack.com/", "token": "xoxc-URL"}}
+    assert slack_auth._token_for_workspace(teams, "bamboohr") == "xoxc-URL"
 
-@respx.mock
-def test_derive_xoxc_token_extracts_from_boot_page():
-    respx.get("https://mycorp.slack.com/").mock(
-        return_value=httpx.Response(200, html=BOOT_HTML)
+
+def test_token_for_workspace_no_match_returns_none():
+    teams = {"T1": {"domain": "bamboohr", "token": "xoxc-AAA"}}
+    assert slack_auth._token_for_workspace(teams, "nope") is None
+
+
+def test_token_for_workspace_ignores_non_xoxc_values():
+    teams = {"T1": {"domain": "bamboohr", "token": "not-a-real-token"}}
+    assert slack_auth._token_for_workspace(teams, "bamboohr") is None
+
+
+def test_read_xoxc_token_raises_when_store_missing(tmp_path):
+    with pytest.raises(SlackAuthError, match="Local Storage"):
+        read_xoxc_token_from_slack_app("bamboohr", leveldb_dir=tmp_path / "nope")
+
+
+def test_read_xoxc_token_returns_matched_token(monkeypatch, tmp_path):
+    leveldb = tmp_path / "leveldb"
+    leveldb.mkdir()
+    monkeypatch.setattr(
+        slack_auth, "_load_local_config",
+        lambda d: {"teams": {"T1": {"domain": "bamboohr", "token": "xoxc-live"}}},
     )
-    token = derive_xoxc_token("mycorp", "xoxd-cookie")
-    assert token == "xoxc-111-222-realtoken"
+    assert read_xoxc_token_from_slack_app("bamboohr", leveldb_dir=leveldb) == "xoxc-live"
 
 
-@respx.mock
-def test_derive_xoxc_token_sends_d_cookie():
-    route = respx.get("https://mycorp.slack.com/").mock(
-        return_value=httpx.Response(200, html=BOOT_HTML)
+def test_read_xoxc_token_lists_known_workspaces_on_mismatch(monkeypatch, tmp_path):
+    leveldb = tmp_path / "leveldb"
+    leveldb.mkdir()
+    monkeypatch.setattr(
+        slack_auth, "_load_local_config",
+        lambda d: {"teams": {"T1": {"domain": "bamboohr", "token": "xoxc-live"}}},
     )
-    derive_xoxc_token("mycorp", "xoxd-secret")
-    assert "d=xoxd-secret" in route.calls.last.request.headers.get("cookie", "")
+    with pytest.raises(SlackAuthError, match="signed in to: bamboohr"):
+        read_xoxc_token_from_slack_app("wrongcorp", leveldb_dir=leveldb)
 
 
-@respx.mock
-def test_derive_xoxc_token_raises_when_no_token():
-    respx.get("https://mycorp.slack.com/").mock(
-        return_value=httpx.Response(200, html="<html>no token here</html>")
-    )
-    with pytest.raises(SlackAuthError, match="no xoxc token"):
-        derive_xoxc_token("mycorp", "xoxd-cookie")
+def test_load_local_config_picks_newest_live_record(monkeypatch, tmp_path):
+    # The core anti-staleness guarantee: older .ldb files keep rotated tokens, so
+    # we must return the live record with the highest LevelDB sequence number.
+    import devrag.utils._vendor.ccl.ccl_chromium_localstorage as ccl_ls
+
+    leveldb = tmp_path / "leveldb"
+    leveldb.mkdir()
+
+    class _Rec:
+        def __init__(self, value, seq, is_live):
+            self.value = value
+            self.leveldb_seq_number = seq
+            self.is_live = is_live
+
+    class _FakeDb:
+        def __init__(self, _dir):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def iter_records_for_script_key(self, _sk, _kk, *, raise_on_no_result=True):
+            return [
+                _Rec('{"teams":{"T1":{"domain":"bamboohr","token":"xoxc-STALE"}}}', 5, True),
+                _Rec('{"teams":{"T1":{"domain":"bamboohr","token":"xoxc-LIVE"}}}', 9, True),
+                _Rec("not-even-json-and-newest", 99, False),  # not live → ignored
+            ]
+
+    monkeypatch.setattr(ccl_ls, "LocalStoreDb", _FakeDb)
+    cfg = slack_auth._load_local_config(leveldb)
+    assert cfg["teams"]["T1"]["token"] == "xoxc-LIVE"
 
 
 # --- cookie reading ---------------------------------------------------------
@@ -196,7 +248,7 @@ def test_read_d_cookie_explicit_browser_surfaces_real_error(fake_browser_cookie3
 
 def test_auth_slack_emits_exports(monkeypatch):
     monkeypatch.setattr(slack_auth, "read_d_cookie", lambda browser=None: "xoxd-cookieval")
-    monkeypatch.setattr(slack_auth, "derive_xoxc_token", lambda ws, cookie, ca_bundle=None: "xoxc-tokenval")
+    monkeypatch.setattr(slack_auth, "read_xoxc_token_from_slack_app", lambda ws: "xoxc-tokenval")
     monkeypatch.setattr(
         "devrag.utils.slack_client.SlackClient.auth_test",
         lambda self: {"user": "tom", "team": "MyCorp"},

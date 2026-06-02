@@ -151,13 +151,15 @@ eval "$(devrag auth slack --workspace mycorp)"      # mycorp = the <x> in https:
 devrag index slack
 ```
 
-`devrag auth slack` reads the `d` cookie from the **Slack desktop app by default**,
-derives the `xoxc` token over HTTP, validates the pair, and prints the two `export`
-lines — so `eval "$(…)"` sets `SLACK_XOXC_TOKEN` / `SLACK_XOXD_COOKIE` in your shell.
-The desktop app is a Chromium app, so its cookie store decrypts with the same machinery
-used for browsers (no extra setup), and reading works even while Slack is running. Set
-`slack.workspace` in `.devrag.yaml` to skip `--workspace` on re-runs. Nothing is written
-to disk by devrag.
+`devrag auth slack` reads both credentials from the **Slack desktop app by default** —
+the `d` cookie from its cookie store and the `xoxc` token from its localStorage (where
+Slack now keeps the token; it's no longer in any web page) — validates the pair, and
+prints the two `export` lines, so `eval "$(…)"` sets `SLACK_XOXC_TOKEN` /
+`SLACK_XOXD_COOKIE` in your shell. The desktop app is a Chromium app, so its cookie store
+decrypts with the same machinery used for browsers (no extra setup) and its localStorage
+is read with a bundled pure-python LevelDB reader — both work even while Slack is running
+(the stores are copied first; nothing is written to disk by devrag). Set `slack.workspace`
+in `.devrag.yaml` to skip `--workspace` on re-runs.
 
 `--browser` selects the source explicitly: `slack` (the desktop app) or
 `chrome`/`firefox`/`brave`/`edge`/`chromium`. With no `--browser`, devrag tries the Slack

@@ -551,8 +551,8 @@ def auth_slack(
     """Obtain Slack session credentials from the desktop app and print shell exports.
 
     Reads the `d` cookie from the Slack desktop app by default (falling back to
-    browsers), derives the xoxc token over HTTP, validates the pair, then prints
-    `export …` lines. Use it as:
+    browsers) and the xoxc token from the desktop app's localStorage, validates
+    the pair, then prints `export …` lines. Use it as:
 
         eval "$(devrag auth slack --workspace mycorp)"
 
@@ -560,7 +560,7 @@ def auth_slack(
     """
     import shlex
     from devrag.config import load_config
-    from devrag.utils.slack_auth import read_d_cookie, derive_xoxc_token
+    from devrag.utils.slack_auth import read_d_cookie, read_xoxc_token_from_slack_app
     from devrag.utils.slack_client import SlackClient, SlackError
 
     config = load_config(project_dir=Path.cwd())
@@ -574,8 +574,8 @@ def auth_slack(
         raise typer.Exit(1)
 
     try:
+        token = read_xoxc_token_from_slack_app(ws)
         cookie = read_d_cookie(browser=browser)
-        token = derive_xoxc_token(ws, cookie, ca_bundle=config.network.ca_bundle)
         identity = SlackClient(token=token, cookie=cookie, ca_bundle=config.network.ca_bundle).auth_test()
     except SlackError as exc:
         typer.echo(f"Error: {exc}", err=True)
