@@ -196,7 +196,7 @@ def test_read_d_cookie_explicit_browser_surfaces_real_error(fake_browser_cookie3
 
 def test_auth_slack_emits_exports(monkeypatch):
     monkeypatch.setattr(slack_auth, "read_d_cookie", lambda browser=None: "xoxd-cookieval")
-    monkeypatch.setattr(slack_auth, "derive_xoxc_token", lambda ws, cookie, verify=None: "xoxc-tokenval")
+    monkeypatch.setattr(slack_auth, "derive_xoxc_token", lambda ws, cookie, ca_bundle=None: "xoxc-tokenval")
     monkeypatch.setattr(
         "devrag.utils.slack_client.SlackClient.auth_test",
         lambda self: {"user": "tom", "team": "MyCorp"},

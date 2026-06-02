@@ -35,11 +35,10 @@ class SlackClient:
     """
 
     def __init__(self, token: str, cookie: str, page_size: int = 200,
-                 verify: str | bool | None = None) -> None:
+                 ca_bundle: str | None = None) -> None:
         self._token = token
         self._page_size = page_size
-        if verify is None:
-            verify = resolve_verify()
+        verify = resolve_verify(ca_bundle)
         self._client = httpx.Client(
             base_url="https://slack.com/api/",
             headers={"Accept": "application/json"},
