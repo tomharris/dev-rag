@@ -174,6 +174,15 @@ def read_d_cookie_from_slack_app(domain: str = "slack.com") -> str:
     ``Local State`` DPAPI key on Windows). ``ChromiumBased`` copies the DB to a
     temp file before reading, so this works even while Slack is running.
 
+    The macOS keychain entry stores the key under account ``"Slack Key"`` (NOT
+    ``"Slack"`` — Slack diverges from Chrome's ``<Browser>``/``<Browser> Safe
+    Storage`` convention here). ``browser_cookie3`` looks the key up with
+    ``security find-generic-password -a <osx_key_user> -s <osx_key_service>``; a
+    wrong account makes that query fail *with no prompt* (item-not-found, not
+    access-denied), after which browser_cookie3 silently substitutes the default
+    "peanuts" password and decryption fails with "Unable to get key for cookie
+    decryption". So ``osx_key_user`` must match the real account exactly.
+
     Raises ``SlackAuthError`` (app not installed / not logged in / cookie absent).
     """
     from browser_cookie3 import ChromiumBased
@@ -184,7 +193,7 @@ def read_d_cookie_from_slack_app(domain: str = "slack.com") -> str:
             domain_name=domain,
             os_crypt_name="slack",
             osx_key_service="Slack Safe Storage",
-            osx_key_user="Slack",
+            osx_key_user="Slack Key",
             **_SLACK_APP_PATHS,
         ).load()
     except Exception as exc:  # no cookie file (app not installed) / decryption error

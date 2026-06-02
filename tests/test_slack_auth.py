@@ -188,6 +188,10 @@ def test_read_d_cookie_from_slack_app_reads_desktop_cookie(fake_browser_cookie3)
     assert kwargs["browser"] == "Slack"
     assert kwargs["os_crypt_name"] == "slack"
     assert kwargs["osx_key_service"] == "Slack Safe Storage"
+    # The macOS keychain entry's account is "Slack Key", not "Slack". A wrong
+    # account makes `security find-generic-password` fail silently (no prompt),
+    # so browser_cookie3 falls back to the default password and decryption fails.
+    assert kwargs["osx_key_user"] == "Slack Key"
 
 
 def test_read_d_cookie_from_slack_app_raises_when_unavailable(fake_browser_cookie3):
