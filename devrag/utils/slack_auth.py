@@ -1,16 +1,20 @@
 """Obtain Slack session credentials (xoxc token + xoxd `d` cookie) automatically.
 
-The web client holds two secrets: the ``d`` cookie (``xoxd-…``) lives in a
-Chromium cookie store, and the ``xoxc-…`` token is exposed in the boot data of
-any workspace page. So we read the cookie locally, then *derive* the token over
-HTTP — no headless browser or localStorage parsing.
+The web client holds two secrets, both living on disk in the **Slack desktop
+app's** Chromium profile (an Electron/Chromium app):
 
-The cookie store we read is, by default, the **Slack desktop app's** (an
-Electron/Chromium app — its ``d`` cookie lives in a ``Cookies`` SQLite file just
-like a browser's). Browsers are tried as a fallback. Desktop-only users are
-never logged in via a browser, so the app is the more reliable source. The token
-still lives in the app's LevelDB store, but we never touch that — we derive it
-over HTTP, consistent with this module's "no localStorage parsing" design.
+- the ``d`` cookie (``xoxd-…``) in the app's ``Cookies`` SQLite store, and
+- the ``xoxc-…`` API token in the web client's ``localConfig_v2`` *localStorage*
+  value, persisted in the app's LevelDB store.
+
+We used to *derive* the token over HTTP by scraping the workspace boot page, but
+modern Slack no longer inlines the token in any server-rendered page (the page
+HTML contains no ``xoxc`` token at all), so that approach is dead. We now read
+the token directly from localStorage via a vendored pure-python Chromium-LevelDB
+reader (see ``devrag/utils/_vendor/ccl``), which Snappy-decompresses the SSTable
+blocks and honours LevelDB sequence numbers so we get the *live* token rather
+than a stale/rotated one left behind in an older ``.ldb`` file. The store is read
+copy-on-read (we copy it to a temp dir first) and never written to.
 
 Used by ``devrag auth slack``. See ``devrag/utils/slack_client.py`` for how the
 pair is consumed once obtained.
@@ -19,11 +23,12 @@ pair is consumed once obtained.
 from __future__ import annotations
 
 import json
+import os
 import re
+import shutil
+import tempfile
+from pathlib import Path
 
-import httpx
-
-from devrag.utils.http import resolve_verify
 from devrag.utils.slack_client import SlackAuthError
 
 _NO_COOKIE_HINT = (
@@ -58,10 +63,25 @@ _SLACK_APP_PATHS = {
     "windows_keys": ["Slack\\Local State"],
 }
 
+# Where the Slack desktop app keeps its Chromium localStorage LevelDB, per OS.
+_SLACK_LOCAL_STORAGE_PATHS = [
+    # macOS
+    "~/Library/Application Support/Slack/Local Storage/leveldb",
+    # Linux (native, snap, flatpak)
+    "~/.config/Slack/Local Storage/leveldb",
+    "~/snap/slack/current/.config/Slack/Local Storage/leveldb",
+    "~/.var/app/com.slack.Slack/config/Slack/Local Storage/leveldb",
+]
+
+_NO_LOCAL_STORAGE_HINT = (
+    "Couldn't find the Slack desktop app's local data (Local Storage/leveldb). "
+    "Make sure the Slack desktop app is installed and you're signed in, or fall "
+    "back to the manual extraction steps in the README."
+)
+
 _NO_TOKEN_HINT = (
-    "Fetched https://{workspace}.slack.com/ but found no xoxc token in the page. "
-    "Check that --workspace is the correct subdomain and that the `d` cookie is "
-    "still valid (it expires when your browser session rotates)."
+    "Found the Slack desktop app's local data but no xoxc token for any workspace. "
+    "Make sure you're signed in to Slack in the desktop app."
 )
 
 
@@ -184,83 +204,113 @@ def _find_d_cookie(jar, source_label: str) -> str:
     )
 
 
-def derive_xoxc_token(workspace: str, cookie: str, *, timeout: float = 30.0,
-                      ca_bundle: str | None = None) -> str:
-    """Derive the ``xoxc-…`` API token for ``workspace`` using the ``d`` cookie.
+def slack_local_storage_dir() -> Path | None:
+    """Return the Slack desktop app's localStorage LevelDB dir, or ``None``.
 
-    Fetches the workspace's web page (which embeds the token in its boot data)
-    authenticated by the cookie, then extracts the token from the response.
-
-    Raises ``SlackAuthError`` if the page yields no token (wrong workspace or an
-    expired cookie).
+    Checks the per-OS install locations (incl. the Windows ``%APPDATA%`` tree)
+    and returns the first that exists.
     """
-    verify = resolve_verify(ca_bundle)
-    resp = httpx.get(
-        f"https://{workspace}.slack.com/",
-        cookies={"d": cookie},
-        follow_redirects=True,
-        timeout=timeout,
-        verify=verify,
-    )
-    resp.raise_for_status()
-    return _extract_token(resp.text, workspace)
-
-
-def _extract_token(page_html: str, workspace: str) -> str:
-    """Extract the xoxc token by JSON-parsing the embedded boot blob.
-
-    Slack inlines its boot data as a JSON object (``boot_data = {…}``) whose
-    ``api_token`` field holds the live ``xoxc-…`` token. Parsing the object and
-    reading that *key* — rather than regex-grabbing the first ``xoxc-`` string in
-    the page — avoids latching onto a placeholder/example token elsewhere in the
-    markup. Falls back to scanning any embedded object so a renamed global still
-    resolves; raises ``SlackAuthError`` if none yields a valid token.
-    """
-    for start in _object_starts(page_html):
-        blob = _balanced_object(page_html, start)
-        if blob is None:
-            continue
-        try:
-            data = json.loads(blob)
-        except json.JSONDecodeError:
-            continue
-        token = data.get("api_token") if isinstance(data, dict) else None
-        if isinstance(token, str) and token.startswith("xoxc-"):
-            return token
-    raise SlackAuthError(_NO_TOKEN_HINT.format(workspace=workspace))
-
-
-def _object_starts(html: str):
-    """Yield candidate ``{`` indices to parse, Slack's ``boot_data`` object first."""
-    marker = re.search(r"boot_data\s*[:=]\s*\{", html)
-    if marker:
-        yield html.index("{", marker.start())
-    yield from (m.start() for m in re.finditer(r"\{", html))
-
-
-def _balanced_object(text: str, open_idx: int) -> str | None:
-    """Return the balanced ``{…}`` substring starting at ``open_idx``.
-
-    String-aware (ignores braces inside JSON string literals, honouring ``\\``
-    escapes) so embedded ``{``/``}`` in values don't unbalance the scan.
-    """
-    depth = 0
-    in_string = escape = False
-    for i in range(open_idx, len(text)):
-        ch = text[i]
-        if in_string:
-            if escape:
-                escape = False
-            elif ch == "\\":
-                escape = True
-            elif ch == '"':
-                in_string = False
-        elif ch == '"':
-            in_string = True
-        elif ch == "{":
-            depth += 1
-        elif ch == "}":
-            depth -= 1
-            if depth == 0:
-                return text[open_idx:i + 1]
+    candidates = list(_SLACK_LOCAL_STORAGE_PATHS)
+    appdata = os.environ.get("APPDATA")
+    if appdata:
+        candidates.append(str(Path(appdata) / "Slack" / "Local Storage" / "leveldb"))
+    for candidate in candidates:
+        path = Path(candidate).expanduser()
+        if path.is_dir():
+            return path
     return None
+
+
+def read_xoxc_token_from_slack_app(workspace: str, *, leveldb_dir: Path | str | None = None) -> str:
+    """Read the live ``xoxc-…`` token for ``workspace`` from the Slack desktop app.
+
+    Reads the web client's ``localConfig_v2`` localStorage value (where Slack now
+    keeps the token — it's no longer in any server-rendered page) from the desktop
+    app's Chromium LevelDB store, picks the team matching ``workspace``, and
+    returns its token. ``leveldb_dir`` overrides auto-detection (used in tests).
+
+    Raises ``SlackAuthError`` if the store/token/workspace can't be found.
+    """
+    src = Path(leveldb_dir).expanduser() if leveldb_dir else slack_local_storage_dir()
+    if src is None or not src.is_dir():
+        raise SlackAuthError(_NO_LOCAL_STORAGE_HINT)
+
+    config = _load_local_config(src)
+    teams = config.get("teams") if isinstance(config, dict) else None
+    if not isinstance(teams, dict) or not teams:
+        raise SlackAuthError(_NO_TOKEN_HINT)
+
+    token = _token_for_workspace(teams, workspace)
+    if token is None:
+        known = ", ".join(sorted(filter(None, (_team_label(t) for t in teams.values())))) or "none"
+        raise SlackAuthError(
+            f"No '{workspace}' workspace found in the Slack desktop app (signed in to: "
+            f"{known}). Check --workspace (the <x> in https://<x>.slack.com) and that "
+            f"you're signed in to that workspace in the Slack app."
+        )
+    return token
+
+
+def _load_local_config(leveldb_dir: Path) -> dict:
+    """Parse the live ``localConfig_v2`` localStorage value into a dict.
+
+    Slack may be running and writing to the store, so we copy it to a temp dir
+    first for a stable, lock-free read (the same approach ``browser_cookie3`` uses
+    for the cookie DB). Among the matching records we take the one with the highest
+    LevelDB sequence number, which is the current value — older ``.ldb`` files hold
+    stale/rotated copies that must not be returned.
+    """
+    # Imported lazily: the vendored reader is only needed for `auth slack`.
+    from devrag.utils._vendor.ccl import ccl_chromium_localstorage as ccl_ls
+
+    with tempfile.TemporaryDirectory(prefix="devrag-slack-ls-") as tmp:
+        tmp_dir = Path(tmp) / "leveldb"
+        shutil.copytree(leveldb_dir, tmp_dir)
+        with ccl_ls.LocalStoreDb(tmp_dir) as db:
+            records = list(
+                db.iter_records_for_script_key(
+                    re.compile(r"slack\.com"),
+                    re.compile(r"localConfig_v2"),
+                    raise_on_no_result=False,
+                )
+            )
+
+    live = [r for r in records if r.is_live] or records
+    if not live:
+        raise SlackAuthError(_NO_LOCAL_STORAGE_HINT)
+    newest = max(live, key=lambda r: r.leveldb_seq_number)
+    try:
+        return json.loads(newest.value)
+    except (json.JSONDecodeError, TypeError) as exc:
+        raise SlackAuthError(
+            "Slack's localConfig_v2 localStorage value wasn't valid JSON "
+            f"({exc}). The desktop app's data may be mid-write — retry."
+        ) from exc
+
+
+def _token_for_workspace(teams: dict, workspace: str) -> str | None:
+    """Return the ``xoxc-…`` token for the team matching ``workspace``, or ``None``.
+
+    Matches on the team's ``domain`` first (the subdomain in
+    https://<domain>.slack.com), then falls back to its ``url``. No single-team
+    fallback: an unmatched ``workspace`` should surface as an error, not silently
+    return some other workspace's token.
+    """
+    ws = workspace.lower()
+    for team in teams.values():
+        if not isinstance(team, dict):
+            continue
+        domain = str(team.get("domain") or "").lower()
+        url = str(team.get("url") or "").lower()
+        if domain == ws or f"{ws}.slack.com" in url:
+            token = team.get("token")
+            if isinstance(token, str) and token.startswith("xoxc-"):
+                return token
+    return None
+
+
+def _team_label(team) -> str | None:
+    """A human label for a team (for the 'signed in to: …' error), or ``None``."""
+    if not isinstance(team, dict):
+        return None
+    return team.get("domain") or team.get("name") or team.get("url")
