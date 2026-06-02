@@ -302,6 +302,16 @@ class MetadataDB:
         )
         self._conn.commit()
 
+    def set_pr_chunk_sources_batch(self, chunk_sources: list[tuple[str, str, int]]) -> None:
+        """Insert multiple (chunk_id, repo, pr_number) tuples in a single transaction."""
+        if not chunk_sources:
+            return
+        self._conn.executemany(
+            "INSERT OR REPLACE INTO pr_chunk_sources (chunk_id, repo, pr_number) VALUES (?, ?, ?)",
+            chunk_sources,
+        )
+        self._conn.commit()
+
     def get_chunks_for_pr(self, repo: str, pr_number: int) -> list[str]:
         rows = self._conn.execute(
             "SELECT chunk_id FROM pr_chunk_sources WHERE repo = ? AND pr_number = ?",
@@ -339,6 +349,16 @@ class MetadataDB:
         )
         self._conn.commit()
 
+    def set_issue_chunk_sources_batch(self, chunk_sources: list[tuple[str, str, int]]) -> None:
+        """Insert multiple (chunk_id, repo, issue_number) tuples in a single transaction."""
+        if not chunk_sources:
+            return
+        self._conn.executemany(
+            "INSERT OR REPLACE INTO issue_chunk_sources (chunk_id, repo, issue_number) VALUES (?, ?, ?)",
+            chunk_sources,
+        )
+        self._conn.commit()
+
     def get_chunks_for_issue(self, repo: str, issue_number: int) -> list[str]:
         rows = self._conn.execute(
             "SELECT chunk_id FROM issue_chunk_sources WHERE repo = ? AND issue_number = ?",
@@ -373,6 +393,16 @@ class MetadataDB:
         self._conn.execute(
             "INSERT OR REPLACE INTO jira_chunk_sources (chunk_id, instance_url, ticket_key) VALUES (?, ?, ?)",
             (chunk_id, instance_url, ticket_key),
+        )
+        self._conn.commit()
+
+    def set_jira_chunk_sources_batch(self, chunk_sources: list[tuple[str, str, str]]) -> None:
+        """Insert multiple (chunk_id, instance_url, ticket_key) tuples in a single transaction."""
+        if not chunk_sources:
+            return
+        self._conn.executemany(
+            "INSERT OR REPLACE INTO jira_chunk_sources (chunk_id, instance_url, ticket_key) VALUES (?, ?, ?)",
+            chunk_sources,
         )
         self._conn.commit()
 
@@ -450,6 +480,16 @@ class MetadataDB:
         )
         self._conn.commit()
 
+    def set_slack_chunk_sources_batch(self, chunk_sources: list[tuple[str, str]]) -> None:
+        """Insert multiple (chunk_id, channel_id) tuples in a single transaction."""
+        if not chunk_sources:
+            return
+        self._conn.executemany(
+            "INSERT OR REPLACE INTO slack_chunk_sources (chunk_id, channel_id) VALUES (?, ?)",
+            chunk_sources,
+        )
+        self._conn.commit()
+
     def get_chunks_for_slack_channel(self, channel_id: str) -> list[str]:
         rows = self._conn.execute(
             "SELECT chunk_id FROM slack_chunk_sources WHERE channel_id = ?", (channel_id,)
@@ -483,6 +523,16 @@ class MetadataDB:
         self._conn.execute(
             "INSERT OR REPLACE INTO session_chunk_sources (chunk_id, cursor_key, session_id) VALUES (?, ?, ?)",
             (chunk_id, cursor_key, session_id),
+        )
+        self._conn.commit()
+
+    def set_session_chunk_sources_batch(self, chunk_sources: list[tuple[str, str, str]]) -> None:
+        """Insert multiple (chunk_id, cursor_key, session_id) tuples in a single transaction."""
+        if not chunk_sources:
+            return
+        self._conn.executemany(
+            "INSERT OR REPLACE INTO session_chunk_sources (chunk_id, cursor_key, session_id) VALUES (?, ?, ?)",
+            chunk_sources,
         )
         self._conn.commit()
 

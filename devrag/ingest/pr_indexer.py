@@ -148,8 +148,8 @@ class PRIndexer:
                     wait=False,
                 )
 
-            for chunk in chunks:
-                self.metadata_db.set_pr_chunk_source(chunk.id, repo, pr["number"])
+            chunk_sources = [(c.id, repo, pr["number"]) for c in chunks]
+            self.metadata_db.set_pr_chunk_sources_batch(chunk_sources)
 
             stats.prs_indexed += 1
             stats.chunks_created += len(chunks)

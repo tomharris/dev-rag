@@ -183,8 +183,8 @@ class JiraIndexer:
                     wait=False,
                 )
 
-            for chunk in chunks:
-                self.metadata_db.set_jira_chunk_source(chunk.id, instance_url, key)
+            chunk_sources = [(c.id, instance_url, key) for c in chunks]
+            self.metadata_db.set_jira_chunk_sources_batch(chunk_sources)
 
             # Track latest updated timestamp for cursor
             if updated_at and updated_at > latest_updated:
