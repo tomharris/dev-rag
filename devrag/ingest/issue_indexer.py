@@ -154,8 +154,8 @@ class IssueIndexer:
                     wait=False,
                 )
 
-            for chunk in chunks:
-                self.metadata_db.set_issue_chunk_source(chunk.id, repo, issue["number"])
+            chunk_sources = [(c.id, repo, issue["number"]) for c in chunks]
+            self.metadata_db.set_issue_chunk_sources_batch(chunk_sources)
 
             stats.issues_indexed += 1
             stats.chunks_created += len(chunks)

@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from devrag.ingest.doc_indexer import CHARS_PER_TOKEN
 from devrag.types import Chunk, SlackSyncStats
@@ -227,11 +228,26 @@ class SlackIndexer:
 
             stats.messages_fetched += len(history)
 
+            # Fetch thread replies in parallel to avoid serial network calls
             replies_map: dict[str, list[dict]] = {}
-            for msg in history:
-                if msg.get("reply_count", 0) > 0:
-                    ts = msg.get("ts", "")
-                    replies_map[ts] = self.slack.conversations_replies(channel_id, ts)
+            threaded_messages = [msg for msg in history if msg.get("reply_count", 0) > 0]
+            if threaded_messages:
+                with ThreadPoolExecutor(max_workers=4) as executor:
+                    future_to_ts = {
+                        executor.submit(self.slack.conversations_replies, channel_id, msg["ts"]): msg["ts"]
+                        for msg in threaded_messages
+                    }
+                    for future in as_completed(future_to_ts):
+                        ts = future_to_ts[future]
+                        try:
+                            replies_map[ts] = future.result()
+                        except Exception as exc:
+                            logger.warning(
+                                "Failed to fetch replies for thread %s in %s: %s",
+                                ts, channel_id, exc,
+                            )
+                            # Fall back to just the root message
+                            replies_map[ts] = [msg for msg in history if msg.get("ts") == ts]
 
             chunks = chunk_slack_channel(
                 channel, history, replies_map, user_map,
@@ -262,8 +278,8 @@ class SlackIndexer:
                 sparse_embeddings=sparse_embeddings,
                 wait=False,
             )
-            for chunk in chunks:
-                self.metadata_db.set_slack_chunk_source(chunk.id, channel_id)
+            chunk_sources = [(c.id, channel_id) for c in chunks]
+            self.metadata_db.set_slack_chunk_sources_batch(chunk_sources)
 
             stats.threads_indexed += sum(1 for c in chunks if c.metadata["chunk_type"] == "slack_thread")
             stats.windows_indexed += sum(1 for c in chunks if c.metadata["chunk_type"] == "slack_window")

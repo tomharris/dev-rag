@@ -229,8 +229,8 @@ class SessionsIndexer:
                 sparse_embeddings=sparse_embeddings,
                 wait=False,
             )
-            for chunk in chunks:
-                self.metadata_db.set_session_chunk_source(chunk.id, CURSOR_KEY, session_id)
+            chunk_sources = [(c.id, CURSOR_KEY, session_id) for c in chunks]
+            self.metadata_db.set_session_chunk_sources_batch(chunk_sources)
 
             stats.files_indexed += 1
             stats.chunks_created += len(chunks)
