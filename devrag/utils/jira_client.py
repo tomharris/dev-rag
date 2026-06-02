@@ -6,6 +6,8 @@ from collections.abc import Iterator
 
 import httpx
 
+from devrag.utils.http import resolve_verify
+
 _BLOCK_TYPES = frozenset({
     "paragraph", "heading", "blockquote", "codeBlock",
     "bulletList", "orderedList", "listItem",
@@ -15,8 +17,11 @@ _BLOCK_TYPES = frozenset({
 
 
 class JiraClient:
-    def __init__(self, instance_url: str, email: str, api_token: str) -> None:
+    def __init__(self, instance_url: str, email: str, api_token: str,
+                 verify: str | bool | None = None) -> None:
         credentials = base64.b64encode(f"{email}:{api_token}".encode()).decode()
+        if verify is None:
+            verify = resolve_verify()
         self._client = httpx.Client(
             base_url=f"{instance_url.rstrip('/')}/rest/api/3/",
             headers={
@@ -25,6 +30,7 @@ class JiraClient:
                 "Accept": "application/json",
             },
             timeout=30.0,
+            verify=verify,
         )
 
     def _request(self, method: str, url: str, **kwargs) -> httpx.Response:

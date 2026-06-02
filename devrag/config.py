@@ -121,6 +121,14 @@ class SessionsConfig:
 
 
 @dataclass
+class NetworkConfig:
+    # Path to a PEM CA bundle for httpx's `verify`; "" = certifi default.
+    # Point this at your corporate proxy's root CA when behind a TLS-intercepting
+    # proxy. Falls back to REQUESTS_CA_BUNDLE / SSL_CERT_FILE when left empty.
+    ca_bundle: str = ""
+
+
+@dataclass
 class DevragConfig:
     embedding: EmbeddingConfig = field(default_factory=EmbeddingConfig)
     sparse_embedding: SparseEmbeddingConfig = field(default_factory=SparseEmbeddingConfig)
@@ -134,6 +142,7 @@ class DevragConfig:
     slack: SlackConfig = field(default_factory=SlackConfig)
     documents: DocumentsConfig = field(default_factory=DocumentsConfig)
     sessions: SessionsConfig = field(default_factory=SessionsConfig)
+    network: NetworkConfig = field(default_factory=NetworkConfig)
 
 
 def _merge_dict_into_dataclass(dc: object, overrides: dict) -> None:

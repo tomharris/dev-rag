@@ -22,6 +22,7 @@ from devrag.retrieve.reranker import Reranker
 from devrag.stores.qdrant_store import QdrantStore
 from devrag.stores.metadata_db import MetadataDB
 from devrag.utils.git import infer_repo
+from devrag.utils.http import resolve_verify
 from devrag.utils.formatters import format_doc_index_stats, format_index_stats, format_issue_sync_stats, format_jira_sync_stats, format_pr_sync_stats, format_repo_doc_stats, format_search_results, format_session_sync_stats, format_slack_sync_stats, format_slite_sync_stats
 from devrag.utils.github import GitHubClient
 from devrag.utils.jira_client import JiraClient
@@ -337,7 +338,7 @@ def sync_prs(repo: str, since_days: int | None = None) -> str:
     token = os.environ.get(config.prs.github_token_env)
     if not token:
         return f"Error: {config.prs.github_token_env} environment variable not set."
-    github = GitHubClient(token=token)
+    github = GitHubClient(token=token, verify=resolve_verify(config.network.ca_bundle))
     indexer = PRIndexer(
         vector_store=_get_vector_store(),
         metadata_db=_get_metadata_db(),
@@ -363,7 +364,7 @@ def sync_issues(repo: str, since_days: int = 90) -> str:
     token = os.environ.get(config.issues.github_token_env)
     if not token:
         return f"Error: {config.issues.github_token_env} environment variable not set."
-    github = GitHubClient(token=token)
+    github = GitHubClient(token=token, verify=resolve_verify(config.network.ca_bundle))
     indexer = IssueIndexer(
         vector_store=_get_vector_store(),
         metadata_db=_get_metadata_db(),
@@ -397,7 +398,8 @@ def sync_jira(since_days: int = 90) -> str:
     token = os.environ.get(config.jira.jira_token_env)
     if not email or not token:
         return f"Error: {config.jira.jira_email_env} and {config.jira.jira_token_env} environment variables must be set."
-    jira = JiraClient(instance_url=config.jira.instance_url, email=email, api_token=token)
+    jira = JiraClient(instance_url=config.jira.instance_url, email=email, api_token=token,
+                      verify=resolve_verify(config.network.ca_bundle))
     indexer = JiraIndexer(
         vector_store=_get_vector_store(),
         metadata_db=_get_metadata_db(),
@@ -424,7 +426,7 @@ def sync_slite(since_days: int = 90) -> str:
     token = os.environ.get(config.slite.slite_token_env)
     if not token:
         return f"Error: {config.slite.slite_token_env} environment variable not set."
-    slite = SliteClient(api_token=token)
+    slite = SliteClient(api_token=token, verify=resolve_verify(config.network.ca_bundle))
     indexer = SliteIndexer(
         vector_store=_get_vector_store(),
         metadata_db=_get_metadata_db(),
@@ -461,7 +463,7 @@ def sync_slack(since_days: int = 90) -> str:
             f"Error: set {config.slack.slack_token_env} (xoxc token) and "
             f"{config.slack.slack_cookie_env} (xoxd cookie) environment variables."
         )
-    slack = SlackClient(token=token, cookie=cookie)
+    slack = SlackClient(token=token, cookie=cookie, verify=resolve_verify(config.network.ca_bundle))
     indexer = SlackIndexer(
         vector_store=_get_vector_store(),
         metadata_db=_get_metadata_db(),

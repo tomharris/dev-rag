@@ -3,6 +3,8 @@ import os
 from pathlib import Path
 import typer
 
+from devrag.utils.http import resolve_verify
+
 app = typer.Typer(name="devrag", help="Local RAG system for developer teams.")
 index_app = typer.Typer(help="Index code, docs, or PRs.")
 config_app = typer.Typer(help="Manage configuration.")
@@ -277,7 +279,7 @@ def index_prs(
     embedder = _make_embedder(config)
     sparse_encoder = _make_sparse_encoder(config)
     days = int(since.rstrip("d")) if since else None
-    github = GitHubClient(token=token)
+    github = GitHubClient(token=token, verify=resolve_verify(config.network.ca_bundle))
     indexer = PRIndexer(store, meta, embedder, sparse_encoder, github, chunk_max_tokens=config.prs.chunk_max_tokens)
     stats = indexer.sync(repo, since_days=days)
     typer.echo(format_pr_sync_stats(stats))
@@ -307,7 +309,7 @@ def index_issues(
     embedder = _make_embedder(config)
     sparse_encoder = _make_sparse_encoder(config)
     days = int(since.rstrip("d"))
-    github = GitHubClient(token=token)
+    github = GitHubClient(token=token, verify=resolve_verify(config.network.ca_bundle))
     indexer = IssueIndexer(store, meta, embedder, sparse_encoder, github, chunk_max_tokens=config.issues.chunk_max_tokens,
                            include_labels=config.issues.include_labels, exclude_labels=config.issues.exclude_labels)
     stats = indexer.sync(repo, since_days=days)
@@ -344,7 +346,8 @@ def index_jira(
     embedder = _make_embedder(config)
     sparse_encoder = _make_sparse_encoder(config)
     days = int(since.rstrip("d"))
-    jira = JiraClient(instance_url=config.jira.instance_url, email=email, api_token=token)
+    jira = JiraClient(instance_url=config.jira.instance_url, email=email, api_token=token,
+                      verify=resolve_verify(config.network.ca_bundle))
     indexer = JiraIndexer(store, meta, embedder, sparse_encoder, jira, chunk_max_tokens=config.jira.chunk_max_tokens)
     stats = indexer.sync(config.jira.instance_url, config.jira.jql, since_days=days)
     typer.echo(format_jira_sync_stats(stats))
@@ -373,7 +376,7 @@ def index_slite(
     embedder = _make_embedder(config)
     sparse_encoder = _make_sparse_encoder(config)
     days = int(since.rstrip("d"))
-    slite = SliteClient(api_token=token)
+    slite = SliteClient(api_token=token, verify=resolve_verify(config.network.ca_bundle))
     indexer = SliteIndexer(store, meta, embedder, sparse_encoder, slite, chunk_max_tokens=config.slite.chunk_max_tokens,
                            chunk_overlap_tokens=config.slite.chunk_overlap_tokens,
                            channel_ids=config.slite.channel_ids)
@@ -413,7 +416,7 @@ def index_slack(
     embedder = _make_embedder(config)
     sparse_encoder = _make_sparse_encoder(config)
     days = int(since.rstrip("d"))
-    slack = SlackClient(token=token, cookie=cookie)
+    slack = SlackClient(token=token, cookie=cookie, verify=resolve_verify(config.network.ca_bundle))
     indexer = SlackIndexer(store, meta, embedder, sparse_encoder, slack,
                            chunk_max_tokens=config.slack.chunk_max_tokens,
                            chunk_overlap_tokens=config.slack.chunk_overlap_tokens,
@@ -561,6 +564,7 @@ def auth_slack(
     from devrag.utils.slack_client import SlackClient, SlackError
 
     config = load_config(project_dir=Path.cwd())
+    verify = resolve_verify(config.network.ca_bundle)
     ws = workspace or config.slack.workspace
     if not ws:
         typer.echo(
@@ -572,8 +576,8 @@ def auth_slack(
 
     try:
         cookie = read_d_cookie(browser=browser)
-        token = derive_xoxc_token(ws, cookie)
-        identity = SlackClient(token=token, cookie=cookie).auth_test()
+        token = derive_xoxc_token(ws, cookie, verify=verify)
+        identity = SlackClient(token=token, cookie=cookie, verify=verify).auth_test()
     except SlackError as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(1)

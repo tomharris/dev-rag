@@ -3,6 +3,8 @@ import re
 import time
 import httpx
 
+from devrag.utils.http import resolve_verify
+
 API_BASE = "https://api.github.com"
 
 
@@ -32,14 +34,16 @@ def _get_next_url(response: httpx.Response) -> str | None:
 
 
 class GitHubClient:
-    def __init__(self, token: str | None = None) -> None:
+    def __init__(self, token: str | None = None, verify: str | bool | None = None) -> None:
         self._headers: dict[str, str] = {
             "Accept": "application/vnd.github+json",
             "X-GitHub-Api-Version": "2022-11-28",
         }
         if token:
             self._headers["Authorization"] = f"Bearer {token}"
-        self._client = httpx.Client(headers=self._headers, timeout=30.0)
+        if verify is None:
+            verify = resolve_verify()
+        self._client = httpx.Client(headers=self._headers, timeout=30.0, verify=verify)
 
     def _request(self, method: str, url: str, **kwargs) -> httpx.Response:
         resp = self._client.request(method, url, **kwargs)
