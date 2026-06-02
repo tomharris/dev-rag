@@ -104,6 +104,21 @@ def test_custom_bundle_still_verifies(ca_pem):
     assert ctx.verify_mode == ssl.CERT_REQUIRED
 
 
+def test_custom_bundle_also_trusts_public_roots(ca_pem):
+    # The corporate CA is ADDED on top of certifi's public roots, not a
+    # replacement — TLS-intercepting proxies bypass some hosts (which keep their
+    # real public certs), so dropping the public roots would break those hosts.
+    import certifi
+
+    ctx = resolve_verify(str(ca_pem))
+    loaded = {(c["serialNumber"], c["subject"]) for c in ctx.get_ca_certs()}
+    # The temp corporate CA is present...
+    assert len(loaded) > 1
+    # ...alongside a large public-root set (certifi ships hundreds).
+    certifi_ctx = ssl.create_default_context(cafile=certifi.where())
+    assert len(ctx.get_ca_certs()) >= len(certifi_ctx.get_ca_certs())
+
+
 def test_tilde_expansion_loads_context(ca_pem, monkeypatch):
     # Point HOME at the temp dir and reference the cert via ~ to prove
     # expansion feeds a real, loadable path into the context builder.
