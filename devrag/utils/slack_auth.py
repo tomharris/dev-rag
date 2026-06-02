@@ -23,6 +23,7 @@ import re
 
 import httpx
 
+from devrag.utils.http import resolve_verify
 from devrag.utils.slack_client import SlackAuthError
 
 _NO_COOKIE_HINT = (
@@ -183,7 +184,8 @@ def _find_d_cookie(jar, source_label: str) -> str:
     )
 
 
-def derive_xoxc_token(workspace: str, cookie: str, *, timeout: float = 30.0) -> str:
+def derive_xoxc_token(workspace: str, cookie: str, *, timeout: float = 30.0,
+                      verify: str | bool | None = None) -> str:
     """Derive the ``xoxc-…`` API token for ``workspace`` using the ``d`` cookie.
 
     Fetches the workspace's web page (which embeds the token in its boot data)
@@ -192,11 +194,14 @@ def derive_xoxc_token(workspace: str, cookie: str, *, timeout: float = 30.0) -> 
     Raises ``SlackAuthError`` if the page yields no token (wrong workspace or an
     expired cookie).
     """
+    if verify is None:
+        verify = resolve_verify()
     resp = httpx.get(
         f"https://{workspace}.slack.com/",
         cookies={"d": cookie},
         follow_redirects=True,
         timeout=timeout,
+        verify=verify,
     )
     resp.raise_for_status()
     return _extract_token(resp.text, workspace)

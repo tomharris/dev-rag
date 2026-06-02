@@ -429,7 +429,40 @@ documents:
   glob_patterns: ["**/*.md", "**/*.mdx", "**/*.txt", "**/*.rst", "**/*.html", "**/*.adoc"]
   chunk_max_tokens: 512
   chunk_overlap_tokens: 50
+
+network:
+  ca_bundle: ""                   # PEM CA bundle for all outbound HTTPS (Slack/Jira/Slite/GitHub)
 ```
+
+### Corporate proxies (TLS interception)
+
+If you're behind a TLS-intercepting corporate proxy, `devrag auth slack`, `index prs/issues/jira/slite/slack`, and their MCP equivalents may fail with:
+
+```
+[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: self-signed certificate in certificate chain
+```
+
+`httpx` verifies against the bundled `certifi` CA list and does **not** consult the macOS keychain or honor `SSL_CERT_FILE` on its own, so the proxy's injected root CA is unknown to it. Point DevRAG at a PEM bundle containing that root CA, either via config:
+
+```yaml
+network:
+  ca_bundle: ~/corp-ca.pem
+```
+
+or via the standard env vars (honored as a fallback when `ca_bundle` is empty):
+
+```bash
+export REQUESTS_CA_BUNDLE=~/corp-ca.pem   # or SSL_CERT_FILE
+```
+
+To export your proxy's root CA from the macOS keychain to a PEM:
+
+```bash
+security find-certificate -a -p -c "<your proxy CA name>" \
+  /Library/Keychains/System.keychain > ~/corp-ca.pem
+```
+
+(or in Keychain Access → select the root CA → File → Export Items → `.pem`). The Ollama embedder talks to localhost and is unaffected.
 
 ### File Exclusion
 

@@ -64,7 +64,7 @@ DevRAG is a local RAG system that ingests code, GitHub PRs, GitHub issues, Jira 
 
 ### Configuration
 
-Nested dataclass hierarchy in `devrag/config.py`. Loaded from `~/.config/devrag/devrag.yaml` (user) merged with `.devrag.yaml` (project). Key sections: `EmbeddingConfig` (including `max_tokens` for context limit), `SparseEmbeddingConfig` (FastEmbed BM25 model), `VectorStoreConfig`, `RetrievalConfig`, `CodeConfig`, `PrsConfig`, `IssuesConfig`, `JiraConfig`, `SliteConfig`, `SlackConfig` (`slack_token_env`/`slack_cookie_env`, `channel_ids` allowlist, `gap_minutes` window threshold), `DocumentsConfig`, `SessionsConfig`.
+Nested dataclass hierarchy in `devrag/config.py`. Loaded from `~/.config/devrag/devrag.yaml` (user) merged with `.devrag.yaml` (project). Key sections: `EmbeddingConfig` (including `max_tokens` for context limit), `SparseEmbeddingConfig` (FastEmbed BM25 model), `VectorStoreConfig`, `RetrievalConfig`, `CodeConfig`, `PrsConfig`, `IssuesConfig`, `JiraConfig`, `SliteConfig`, `SlackConfig` (`slack_token_env`/`slack_cookie_env`, `channel_ids` allowlist, `gap_minutes` window threshold), `DocumentsConfig`, `SessionsConfig`, `NetworkConfig` (`ca_bundle` — PEM path used as httpx `verify=` for **all** external HTTPS clients; for corporate TLS-intercepting proxies whose self-signed root CA isn't in `certifi`). httpx ignores `SSL_CERT_FILE`/the OS keychain on its own, so all clients route their `verify=` through `resolve_verify()` in `devrag/utils/http.py`, which prefers `network.ca_bundle`, then `REQUESTS_CA_BUNDLE`/`SSL_CERT_FILE` env, else certifi default. The Ollama embedder (localhost) is exempt.
 
 ### Evaluation
 

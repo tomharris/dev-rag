@@ -5,6 +5,8 @@ from collections.abc import Iterator
 
 import httpx
 
+from devrag.utils.http import resolve_verify
+
 
 class SlackError(Exception):
     """A Slack web-API call returned ``ok: false``."""
@@ -32,14 +34,18 @@ class SlackClient:
     and the cookie as a ``d=…`` cookie, matching the web client's requests.
     """
 
-    def __init__(self, token: str, cookie: str, page_size: int = 200) -> None:
+    def __init__(self, token: str, cookie: str, page_size: int = 200,
+                 verify: str | bool | None = None) -> None:
         self._token = token
         self._page_size = page_size
+        if verify is None:
+            verify = resolve_verify()
         self._client = httpx.Client(
             base_url="https://slack.com/api/",
             headers={"Accept": "application/json"},
             cookies={"d": cookie},
             timeout=30.0,
+            verify=verify,
         )
 
     def _call(self, endpoint: str, params: dict) -> dict:

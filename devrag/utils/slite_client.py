@@ -5,9 +5,13 @@ from collections.abc import Iterator
 
 import httpx
 
+from devrag.utils.http import resolve_verify
+
 
 class SliteClient:
-    def __init__(self, api_token: str) -> None:
+    def __init__(self, api_token: str, verify: str | bool | None = None) -> None:
+        if verify is None:
+            verify = resolve_verify()
         self._client = httpx.Client(
             base_url="https://api.slite.com/v1/",
             headers={
@@ -15,6 +19,7 @@ class SliteClient:
                 "Accept": "application/json",
             },
             timeout=30.0,
+            verify=verify,
         )
 
     def _request(self, method: str, url: str, **kwargs) -> httpx.Response:
