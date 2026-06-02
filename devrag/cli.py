@@ -416,7 +416,7 @@ def index_slack(
     embedder = _make_embedder(config)
     sparse_encoder = _make_sparse_encoder(config)
     days = int(since.rstrip("d"))
-    slack = SlackClient(token=token, cookie=cookie, verify=resolve_verify(config.network.ca_bundle))
+    slack = SlackClient(token=token, cookie=cookie, ca_bundle=config.network.ca_bundle)
     indexer = SlackIndexer(store, meta, embedder, sparse_encoder, slack,
                            chunk_max_tokens=config.slack.chunk_max_tokens,
                            chunk_overlap_tokens=config.slack.chunk_overlap_tokens,
@@ -564,7 +564,6 @@ def auth_slack(
     from devrag.utils.slack_client import SlackClient, SlackError
 
     config = load_config(project_dir=Path.cwd())
-    verify = resolve_verify(config.network.ca_bundle)
     ws = workspace or config.slack.workspace
     if not ws:
         typer.echo(
@@ -576,8 +575,8 @@ def auth_slack(
 
     try:
         cookie = read_d_cookie(browser=browser)
-        token = derive_xoxc_token(ws, cookie, verify=verify)
-        identity = SlackClient(token=token, cookie=cookie, verify=verify).auth_test()
+        token = derive_xoxc_token(ws, cookie, ca_bundle=config.network.ca_bundle)
+        identity = SlackClient(token=token, cookie=cookie, ca_bundle=config.network.ca_bundle).auth_test()
     except SlackError as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(1)
