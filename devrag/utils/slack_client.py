@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import random
+import threading
 import time
 from collections.abc import Iterator
 
@@ -35,9 +37,17 @@ class SlackClient:
     """
 
     def __init__(self, token: str, cookie: str, page_size: int = 200,
-                 ca_bundle: str | None = None) -> None:
+                 ca_bundle: str | None = None, min_request_interval: float = 0.0,
+                 max_retries: int = 5) -> None:
         self._token = token
         self._page_size = page_size
+        self._min_request_interval = max(min_request_interval, 0.0)
+        self._max_retries = max(max_retries, 0)
+        # Pace request *starts* across threads: the indexer fans replies out
+        # over a ThreadPoolExecutor, and Slack's internal web API rate-limits far
+        # more aggressively than the documented App tiers.
+        self._lock = threading.Lock()
+        self._last_request_ts = 0.0
         verify = resolve_verify(ca_bundle)
         self._client = httpx.Client(
             base_url="https://slack.com/api/",
@@ -47,23 +57,45 @@ class SlackClient:
             verify=verify,
         )
 
-    def _call(self, endpoint: str, params: dict) -> dict:
-        """POST a form-encoded API call, retrying transient failures.
+    def _throttle(self) -> None:
+        """Block until at least ``min_request_interval`` has passed since the last
+        request start, then stamp this start. Holding the lock across the sleep
+        serializes request starts into a global rate cap regardless of caller
+        concurrency."""
+        if self._min_request_interval <= 0:
+            return
+        with self._lock:
+            wait = self._last_request_ts + self._min_request_interval - time.monotonic()
+            if wait > 0:
+                time.sleep(wait)
+            self._last_request_ts = time.monotonic()
 
+    def _call(self, endpoint: str, params: dict) -> dict:
+        """POST a form-encoded API call, pacing and retrying transient failures.
+
+        Paces request starts via ``_throttle`` and retries 429/5xx/timeout up to
+        ``max_retries`` times with ``Retry-After``-aware exponential backoff.
         Raises ``SlackAuthError`` for credential failures and ``SlackError`` for
         any other ``ok: false`` body, so callers never silently process empty
         results from an expired token.
         """
         data = {"token": self._token, **params}
-        try:
-            resp = self._client.post(endpoint, data=data)
-        except httpx.TimeoutException:
-            time.sleep(2)
-            resp = self._client.post(endpoint, data=data)
-        if resp.status_code == 429:
-            retry_after = int(resp.headers.get("Retry-After", "5"))
-            time.sleep(min(retry_after, 60))
-            resp = self._client.post(endpoint, data=data)
+        for attempt in range(self._max_retries + 1):
+            last = attempt == self._max_retries
+            self._throttle()
+            try:
+                resp = self._client.post(endpoint, data=data)
+            except httpx.TimeoutException:
+                if last:
+                    raise
+                time.sleep(self._backoff(attempt))
+                continue
+            if resp.status_code == 429 or resp.status_code >= 500:
+                if last:
+                    resp.raise_for_status()
+                time.sleep(self._backoff(attempt, resp.headers.get("Retry-After")))
+                continue
+            break
         resp.raise_for_status()
         body = resp.json()
         if not body.get("ok", False):
@@ -72,6 +104,17 @@ class SlackClient:
                 raise SlackAuthError(_AUTH_HINT.format(error=error))
             raise SlackError(f"Slack API {endpoint} failed: {error}")
         return body
+
+    @staticmethod
+    def _backoff(attempt: int, retry_after: str | None = None) -> float:
+        """Seconds to wait before the next attempt: honor ``Retry-After`` when
+        present, else exponential backoff with jitter, capped at 60s."""
+        if retry_after is not None:
+            try:
+                return min(float(retry_after), 60.0)
+            except ValueError:
+                pass
+        return min(2.0 ** attempt, 60.0) + random.uniform(0, 0.5)
 
     def _paginate(self, endpoint: str, key: str, params: dict) -> Iterator[dict]:
         """Yield items under ``key`` across cursor-paginated pages."""

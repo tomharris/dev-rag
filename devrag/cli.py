@@ -416,12 +416,16 @@ def index_slack(
     embedder = _make_embedder(config)
     sparse_encoder = _make_sparse_encoder(config)
     days = int(since.rstrip("d"))
-    slack = SlackClient(token=token, cookie=cookie, ca_bundle=config.network.ca_bundle)
+    rpm = config.slack.requests_per_minute
+    slack = SlackClient(token=token, cookie=cookie, ca_bundle=config.network.ca_bundle,
+                        min_request_interval=(60.0 / rpm if rpm > 0 else 0.0),
+                        max_retries=config.slack.max_retries)
     indexer = SlackIndexer(store, meta, embedder, sparse_encoder, slack,
                            chunk_max_tokens=config.slack.chunk_max_tokens,
                            chunk_overlap_tokens=config.slack.chunk_overlap_tokens,
                            channel_ids=config.slack.channel_ids,
-                           gap_minutes=config.slack.gap_minutes)
+                           gap_minutes=config.slack.gap_minutes,
+                           max_reply_workers=config.slack.max_reply_workers)
     stats = indexer.sync(since_days=days)
     typer.echo(format_slack_sync_stats(stats))
 

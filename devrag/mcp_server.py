@@ -463,7 +463,10 @@ def sync_slack(since_days: int = 90) -> str:
             f"Error: set {config.slack.slack_token_env} (xoxc token) and "
             f"{config.slack.slack_cookie_env} (xoxd cookie) environment variables."
         )
-    slack = SlackClient(token=token, cookie=cookie, verify=resolve_verify(config.network.ca_bundle))
+    rpm = config.slack.requests_per_minute
+    slack = SlackClient(token=token, cookie=cookie, ca_bundle=config.network.ca_bundle,
+                        min_request_interval=(60.0 / rpm if rpm > 0 else 0.0),
+                        max_retries=config.slack.max_retries)
     indexer = SlackIndexer(
         vector_store=_get_vector_store(),
         metadata_db=_get_metadata_db(),
@@ -474,6 +477,7 @@ def sync_slack(since_days: int = 90) -> str:
         chunk_overlap_tokens=config.slack.chunk_overlap_tokens,
         channel_ids=config.slack.channel_ids,
         gap_minutes=config.slack.gap_minutes,
+        max_reply_workers=config.slack.max_reply_workers,
     )
     stats = indexer.sync(since_days=since_days)
     return format_slack_sync_stats(stats)

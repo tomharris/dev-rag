@@ -1,3 +1,5 @@
+import time
+
 import httpx
 import pytest
 import respx
@@ -92,6 +94,59 @@ def test_generic_ok_false_raises():
     with pytest.raises(SlackError) as exc:
         list(client.conversations_history("CBAD"))
     assert "channel_not_found" in str(exc.value)
+
+
+@respx.mock
+def test_429_retries_then_succeeds():
+    calls = {"n": 0}
+
+    def handler(request):
+        calls["n"] += 1
+        if calls["n"] <= 2:
+            return httpx.Response(429, headers={"Retry-After": "0"}, json={"ok": False})
+        return httpx.Response(200, json={
+            "ok": True, "channels": [{"id": "C1"}], "response_metadata": {"next_cursor": ""},
+        })
+
+    respx.post(f"{API}/conversations.list").mock(side_effect=handler)
+    client = SlackClient(token="xoxc-test", cookie="xoxd-test", max_retries=5)
+    channels = list(client.list_conversations())
+    assert [c["id"] for c in channels] == ["C1"]
+    assert calls["n"] == 3  # two 429s + one success
+
+
+@respx.mock
+def test_429_exhausts_retries_and_raises():
+    route = respx.post(f"{API}/conversations.list").mock(
+        return_value=httpx.Response(429, headers={"Retry-After": "0"}, json={"ok": False})
+    )
+    client = SlackClient(token="xoxc-test", cookie="xoxd-test", max_retries=2)
+    with pytest.raises(httpx.HTTPStatusError):
+        list(client.list_conversations())
+    assert route.call_count == 3  # max_retries + 1 attempts
+
+
+@respx.mock
+def test_throttle_paces_request_starts():
+    respx.post(f"{API}/auth.test").respond(json={"ok": True, "user": "u"})
+    client = SlackClient(token="xoxc-test", cookie="xoxd-test",
+                         min_request_interval=0.05, max_retries=0)
+    start = time.monotonic()
+    client.auth_test()
+    client.auth_test()
+    elapsed = time.monotonic() - start
+    assert elapsed >= 0.05  # second request start spaced by the interval
+
+
+@respx.mock
+def test_auth_error_short_circuits_without_retry():
+    route = respx.post(f"{API}/conversations.list").respond(
+        json={"ok": False, "error": "invalid_auth"}
+    )
+    client = SlackClient(token="xoxc-expired", cookie="xoxd-expired", max_retries=5)
+    with pytest.raises(SlackAuthError):
+        list(client.list_conversations())
+    assert route.call_count == 1  # ok:false auth error is not retried
 
 
 @respx.mock
