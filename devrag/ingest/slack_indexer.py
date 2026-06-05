@@ -178,6 +178,7 @@ class SlackIndexer:
         chunk_overlap_tokens: int = 50,
         channel_ids: list[str] | None = None,
         gap_minutes: int = 30,
+        max_reply_workers: int = 2,
     ) -> None:
         self.vector_store = vector_store
         self.metadata_db = metadata_db
@@ -188,6 +189,7 @@ class SlackIndexer:
         self.chunk_overlap_tokens = chunk_overlap_tokens
         self.channel_ids = channel_ids or []
         self.gap_minutes = gap_minutes
+        self.max_reply_workers = max(max_reply_workers, 1)
 
     def _build_user_map(self) -> dict[str, str]:
         return {m["id"]: _display_name(m) for m in self.slack.users_list()}
@@ -232,7 +234,7 @@ class SlackIndexer:
             replies_map: dict[str, list[dict]] = {}
             threaded_messages = [msg for msg in history if msg.get("reply_count", 0) > 0]
             if threaded_messages:
-                with ThreadPoolExecutor(max_workers=4) as executor:
+                with ThreadPoolExecutor(max_workers=self.max_reply_workers) as executor:
                     future_to_ts = {
                         executor.submit(self.slack.conversations_replies, channel_id, msg["ts"]): msg["ts"]
                         for msg in threaded_messages
