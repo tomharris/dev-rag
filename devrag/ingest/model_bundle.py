@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 # Pinned per release. The release task (Task 9) creates the `models-v1` tag,
 # uploads the bundle, and fills DEFAULT_BUNDLE_SHA256 with the printed digest.
 DEFAULT_BUNDLE_URL = "https://github.com/tomharris/dev-rag/releases/download/models-v1/devrag-models.tar.gz"
-DEFAULT_BUNDLE_SHA256 = ""
+DEFAULT_BUNDLE_SHA256 = "80926e24fdf1443cac8d1dc949326bf8205ad1a9fb6649e57a091d7e6f5f9abf"
 
 
 def resolve_fastembed_cache_dir(config) -> Path:
