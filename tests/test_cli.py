@@ -85,3 +85,13 @@ def test_cli_eval_run_help():
 def test_cli_eval_compare_help():
     result = runner.invoke(app, ["eval", "compare", "--help"])
     assert result.exit_code == 0
+
+
+def test_download_models_command_invokes_download_bundle():
+    from devrag.config import DevragConfig
+    with patch("devrag.ingest.model_bundle.download_bundle") as mock_dl, \
+         patch("devrag.config.load_config", return_value=DevragConfig()):
+        result = runner.invoke(app, ["download-models", "--force"])
+    assert result.exit_code == 0, result.output
+    assert mock_dl.call_count == 1
+    assert mock_dl.call_args.kwargs.get("force") is True

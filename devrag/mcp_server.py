@@ -78,10 +78,13 @@ def _get_embedder() -> OllamaEmbedder:
 def _get_sparse_encoder() -> BM25SparseEncoder:
     global _sparse_encoder
     if _sparse_encoder is None:
+        from devrag.ingest.model_bundle import ensure_models, resolve_fastembed_cache_dir
         config = _get_config()
+        ensure_models(config)
         _sparse_encoder = BM25SparseEncoder(
             model_name=config.sparse_embedding.model,
             batch_size=config.sparse_embedding.batch_size,
+            cache_dir=str(resolve_fastembed_cache_dir(config)),
         )
     return _sparse_encoder
 
