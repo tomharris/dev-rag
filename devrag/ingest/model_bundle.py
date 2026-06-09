@@ -55,3 +55,59 @@ def models_present(config) -> bool:
     reranker_ok = _has_files(hf_dir / _hf_repo_dir(config.retrieval.reranker_model) / "snapshots")
     bm25_ok = _has_files(fe_dir / _hf_repo_dir(config.sparse_embedding.model))
     return reranker_ok and bm25_ok
+
+
+def _resolve_url_and_sha(config) -> tuple[str, str]:
+    url = config.network.model_bundle_url or DEFAULT_BUNDLE_URL
+    sha = config.network.model_bundle_sha256
+    if not sha and url == DEFAULT_BUNDLE_URL:
+        sha = DEFAULT_BUNDLE_SHA256
+    return url, sha
+
+
+def _merge_tree(src: Path, dst: Path) -> None:
+    if not src.is_dir():
+        return
+    dst.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(src, dst, dirs_exist_ok=True)
+
+
+def download_bundle(config, *, force: bool = False) -> None:
+    """Download the model bundle and extract it into the HF + FastEmbed caches."""
+    from devrag.utils.http import resolve_verify
+
+    if not force and models_present(config):
+        return
+
+    url, expected_sha = _resolve_url_and_sha(config)
+    hf_dir, fe_dir = bundle_target_dirs(config)
+    verify = resolve_verify(config.network.ca_bundle)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        archive = Path(tmp) / "bundle.tar.gz"
+        hasher = hashlib.sha256()
+        with httpx.Client(verify=verify, follow_redirects=True, timeout=120.0) as client:
+            with client.stream("GET", url) as resp:
+                resp.raise_for_status()
+                with archive.open("wb") as fh:
+                    for chunk in resp.iter_bytes():
+                        hasher.update(chunk)
+                        fh.write(chunk)
+
+        if expected_sha:
+            actual = hasher.hexdigest()
+            if actual != expected_sha:
+                raise RuntimeError(
+                    f"Model bundle checksum mismatch: expected {expected_sha}, got {actual}"
+                )
+        else:
+            logger.warning("No expected sha256 for model bundle %s; skipping verification", url)
+
+        staging = Path(tmp) / "staging"
+        staging.mkdir()
+        with tarfile.open(archive, mode="r:gz") as tar:
+            # filter='data' (Python 3.12+) rejects absolute paths and `..` traversal.
+            tar.extractall(path=staging, filter="data")
+
+        _merge_tree(staging / "hub", hf_dir)
+        _merge_tree(staging / "fastembed", fe_dir)
