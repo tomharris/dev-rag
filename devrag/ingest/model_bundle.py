@@ -38,3 +38,20 @@ def bundle_target_dirs(config) -> tuple[Path, Path]:
     """(HF hub cache dir, FastEmbed cache dir) — the bundle's extraction targets."""
     from huggingface_hub import constants
     return Path(constants.HF_HUB_CACHE), resolve_fastembed_cache_dir(config)
+
+
+def _hf_repo_dir(repo_id: str) -> str:
+    """HF/FastEmbed on-disk cache dir name for a repo id (org/name)."""
+    return "models--" + repo_id.replace("/", "--")
+
+
+def _has_files(directory: Path) -> bool:
+    return directory.is_dir() and any(p.is_file() for p in directory.rglob("*"))
+
+
+def models_present(config) -> bool:
+    """True when both the reranker and BM25 models are already on disk."""
+    hf_dir, fe_dir = bundle_target_dirs(config)
+    reranker_ok = _has_files(hf_dir / _hf_repo_dir(config.retrieval.reranker_model) / "snapshots")
+    bm25_ok = _has_files(fe_dir / _hf_repo_dir(config.sparse_embedding.model))
+    return reranker_ok and bm25_ok
