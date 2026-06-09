@@ -48,3 +48,31 @@ def test_reranker_empty_candidates(mock_ce_class):
 def test_reranker_passes_max_length_to_model(mock_ce_class):
     Reranker(model_name="cross-encoder/ms-marco-MiniLM-L-6-v2", max_length=256)
     assert mock_ce_class.call_args.kwargs["max_length"] == 256
+
+
+@patch("devrag.retrieve.reranker.CrossEncoder")
+def test_reranker_prefers_local_cache(mock_ce_class):
+    Reranker(model_name="cross-encoder/ms-marco-MiniLM-L-6-v2")
+    assert mock_ce_class.call_count == 1
+    assert mock_ce_class.call_args.kwargs.get("local_files_only") is True
+
+
+@patch("devrag.retrieve.reranker.CrossEncoder")
+def test_reranker_falls_back_to_online_when_not_cached(mock_ce_class):
+    online_model = MagicMock()
+    mock_ce_class.side_effect = [OSError("not cached"), online_model]
+    reranker = Reranker(model_name="cross-encoder/ms-marco-MiniLM-L-6-v2")
+    assert mock_ce_class.call_count == 2
+    assert mock_ce_class.call_args_list[0].kwargs.get("local_files_only") is True
+    assert "local_files_only" not in mock_ce_class.call_args_list[1].kwargs
+    assert reranker._model is online_model
+
+
+@patch("devrag.retrieve.reranker.CrossEncoder")
+def test_reranker_clear_error_when_uncached_and_offline(mock_ce_class):
+    mock_ce_class.side_effect = [
+        OSError("not cached"),
+        RuntimeError("Cannot send a request, as the client has been closed."),
+    ]
+    with pytest.raises(RuntimeError, match="not cached locally and huggingface.co"):
+        Reranker(model_name="cross-encoder/ms-marco-MiniLM-L-6-v2")

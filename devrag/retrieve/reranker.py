@@ -16,7 +16,24 @@ class Reranker:
         tf_logging.set_verbosity_error()
         hf_logger.setLevel(logging.ERROR)
         try:
-            self._model = CrossEncoder(model_name, max_length=max_length)
+            # Prefer the local HF cache: a cache-only load makes zero network
+            # calls, so it works behind networks that block huggingface.co and
+            # sidesteps the huggingface_hub closed-client bug (a connect error
+            # during the online etag HEAD surfaces as the misleading
+            # "Cannot send a request, as the client has been closed").
+            try:
+                self._model = CrossEncoder(model_name, max_length=max_length, local_files_only=True)
+            except Exception:
+                # Not in the local cache — allow a network download (first run,
+                # HF reachable).
+                try:
+                    self._model = CrossEncoder(model_name, max_length=max_length)
+                except RuntimeError as exc:
+                    raise RuntimeError(
+                        f"Reranker model '{model_name}' is not cached locally and huggingface.co "
+                        f"could not be reached. Pre-download it on a network with HF access, or set "
+                        f"retrieval.rerank: false to disable reranking."
+                    ) from exc
         finally:
             tf_logging.set_verbosity(prev_tf)
             hf_logger.setLevel(prev_hf)
