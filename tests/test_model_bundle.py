@@ -135,3 +135,31 @@ def test_download_bundle_skips_when_present_without_force(tmp_path, monkeypatch)
     cfg.network.model_bundle_url = "https://example.test/bundle.tar.gz"
     model_bundle.download_bundle(cfg)
     assert route.call_count == 0
+
+
+def test_ensure_models_noop_when_present(monkeypatch):
+    cfg = DevragConfig()
+    monkeypatch.setattr(model_bundle, "models_present", lambda c: True)
+    called = {"n": 0}
+    monkeypatch.setattr(model_bundle, "download_bundle", lambda c, **k: called.__setitem__("n", called["n"] + 1))
+    model_bundle.ensure_models(cfg)
+    assert called["n"] == 0
+
+
+def test_ensure_models_downloads_when_absent_and_auto_on(monkeypatch):
+    cfg = DevragConfig()
+    monkeypatch.setattr(model_bundle, "models_present", lambda c: False)
+    called = {"n": 0}
+    monkeypatch.setattr(model_bundle, "download_bundle", lambda c, **k: called.__setitem__("n", called["n"] + 1))
+    model_bundle.ensure_models(cfg)
+    assert called["n"] == 1
+
+
+def test_ensure_models_noop_when_auto_off(monkeypatch):
+    cfg = DevragConfig()
+    cfg.network.auto_download_models = False
+    monkeypatch.setattr(model_bundle, "models_present", lambda c: False)
+    called = {"n": 0}
+    monkeypatch.setattr(model_bundle, "download_bundle", lambda c, **k: called.__setitem__("n", called["n"] + 1))
+    model_bundle.ensure_models(cfg)
+    assert called["n"] == 0

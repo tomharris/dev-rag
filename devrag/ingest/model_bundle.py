@@ -111,3 +111,20 @@ def download_bundle(config, *, force: bool = False) -> None:
 
         _merge_tree(staging / "hub", hf_dir)
         _merge_tree(staging / "fastembed", fe_dir)
+
+
+def ensure_models(config) -> None:
+    """Auto-download the bundle on first use when models aren't cached.
+
+    No-op when the models are present or when auto-download is disabled (the
+    offline-first loaders then surface a clear error pointing at
+    `devrag download-models`).
+    """
+    if models_present(config):
+        return
+    if not config.network.auto_download_models:
+        return
+    url, _ = _resolve_url_and_sha(config)
+    print(f"DevRAG models not found locally; downloading bundle (~88 MB) from {url} ...", file=sys.stderr)
+    download_bundle(config)
+    print("DevRAG models ready.", file=sys.stderr)
