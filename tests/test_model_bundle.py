@@ -163,3 +163,15 @@ def test_ensure_models_noop_when_auto_off(monkeypatch):
     monkeypatch.setattr(model_bundle, "download_bundle", lambda c, **k: called.__setitem__("n", called["n"] + 1))
     model_bundle.ensure_models(cfg)
     assert called["n"] == 0
+
+
+def test_ensure_models_swallows_download_failure(monkeypatch):
+    cfg = DevragConfig()
+    monkeypatch.setattr(model_bundle, "models_present", lambda c: False)
+
+    def boom(c, **k):
+        raise RuntimeError("404 not found")
+
+    monkeypatch.setattr(model_bundle, "download_bundle", boom)
+    # Must not raise — best-effort auto-download falls through to the loaders.
+    model_bundle.ensure_models(cfg)
