@@ -23,10 +23,13 @@ def _make_embedder(config):
 
 
 def _make_sparse_encoder(config):
+    from devrag.ingest.model_bundle import ensure_models, resolve_fastembed_cache_dir
     from devrag.ingest.sparse_encoder import BM25SparseEncoder
+    ensure_models(config)
     return BM25SparseEncoder(
         model_name=config.sparse_embedding.model,
         batch_size=config.sparse_embedding.batch_size,
+        cache_dir=str(resolve_fastembed_cache_dir(config)),
     )
 
 
@@ -45,6 +48,22 @@ def _get_search_components():
         max_length=config.retrieval.reranker_max_length,
     ) if config.retrieval.rerank else None
     return hybrid, reranker, config
+
+
+@app.command("download-models")
+def download_models(
+    force: bool = typer.Option(False, "--force", help="Re-download even if models are already cached"),
+    url: str = typer.Option("", "--url", help="One-off override of the bundle URL"),
+):
+    """Download the reranker + BM25 model bundle into the local caches."""
+    from devrag.config import load_config
+    from devrag.ingest.model_bundle import download_bundle
+    config = load_config(project_dir=Path.cwd())
+    if url:
+        config.network.model_bundle_url = url
+    typer.echo("Downloading DevRAG model bundle...")
+    download_bundle(config, force=force)
+    typer.echo("Models ready.")
 
 
 @app.command()
