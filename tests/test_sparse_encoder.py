@@ -70,3 +70,14 @@ def test_encode_query_produces_sparse_vector():
         result = enc.encode_query("query text")
     assert result.indices == [5]
     assert result.values == [1.2]
+
+
+def test_sparse_encoder_passes_cache_dir_on_both_paths():
+    online_model = MagicMock()
+    with patch("fastembed.SparseTextEmbedding", side_effect=[OSError("not cached"), online_model]) as mock_ste:
+        enc = BM25SparseEncoder(model_name="Qdrant/bm25", cache_dir="/tmp/devrag-fe")
+        enc._get_model()
+    assert mock_ste.call_count == 2
+    assert mock_ste.call_args_list[0].kwargs.get("cache_dir") == "/tmp/devrag-fe"
+    assert mock_ste.call_args_list[0].kwargs.get("local_files_only") is True
+    assert mock_ste.call_args_list[1].kwargs.get("cache_dir") == "/tmp/devrag-fe"

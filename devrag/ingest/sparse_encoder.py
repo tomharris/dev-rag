@@ -8,22 +8,31 @@ logger = logging.getLogger(__name__)
 
 
 class BM25SparseEncoder:
-    def __init__(self, model_name: str = "Qdrant/bm25", batch_size: int = 64) -> None:
+    def __init__(self, model_name: str = "Qdrant/bm25", batch_size: int = 64, cache_dir: str | None = None) -> None:
         self.model_name = model_name
         self.batch_size = batch_size
+        self.cache_dir = cache_dir
         self._model = None
 
     def _get_model(self):
         if self._model is None:
             from fastembed import SparseTextEmbedding
-            # Prefer the local HF cache so a network that blocks huggingface.co
+            # Prefer the local cache so a network that blocks huggingface.co
             # (or the huggingface_hub closed-client bug on a metadata refresh)
             # can't break loading an already-downloaded model.
             try:
-                self._model = SparseTextEmbedding(model_name=self.model_name, local_files_only=True)
+                self._model = SparseTextEmbedding(
+                    model_name=self.model_name, cache_dir=self.cache_dir, local_files_only=True
+                )
             except Exception:
                 # Not cached — allow a network download (first run, HF reachable).
-                self._model = SparseTextEmbedding(model_name=self.model_name)
+                try:
+                    self._model = SparseTextEmbedding(model_name=self.model_name, cache_dir=self.cache_dir)
+                except Exception as exc:
+                    raise RuntimeError(
+                        f"BM25 model '{self.model_name}' is not cached locally and could not be "
+                        f"downloaded. Run `devrag download-models` to fetch the model bundle."
+                    ) from exc
         return self._model
 
     def encode(self, texts: list[str]) -> list[SparseVector]:
