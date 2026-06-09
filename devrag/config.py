@@ -19,6 +19,10 @@ class EmbeddingConfig:
 class SparseEmbeddingConfig:
     model: str = "Qdrant/bm25"
     batch_size: int = 64
+    # FastEmbed model cache dir. "" resolves to ~/.cache/devrag/fastembed.
+    # FastEmbed defaults to a volatile temp dir that is wiped on reboot, so we
+    # pin a persistent one (also the extraction target for `download-models`).
+    cache_dir: str = ""
 
 
 @dataclass
@@ -129,6 +133,15 @@ class NetworkConfig:
     # Point this at your corporate proxy's root CA when behind a TLS-intercepting
     # proxy. Falls back to REQUESTS_CA_BUNDLE / SSL_CERT_FILE when left empty.
     ca_bundle: str = ""
+    # Override the model-bundle download URL (e.g. an internal/air-gapped mirror).
+    # "" uses the built-in dev-rag GitHub release asset.
+    model_bundle_url: str = ""
+    # Expected sha256 of the bundle at model_bundle_url. "" uses the built-in
+    # checksum when model_bundle_url is also "", otherwise skips verification.
+    model_bundle_sha256: str = ""
+    # Auto-download the model bundle on first use when models aren't cached.
+    # Set false (CI / air-gapped) to fail fast with the explicit-command hint.
+    auto_download_models: bool = True
 
 
 @dataclass
