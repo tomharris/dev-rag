@@ -31,8 +31,8 @@ class Reranker:
                 except RuntimeError as exc:
                     raise RuntimeError(
                         f"Reranker model '{model_name}' is not cached locally and huggingface.co "
-                        f"could not be reached. Pre-download it on a network with HF access, or set "
-                        f"retrieval.rerank: false to disable reranking."
+                        f"could not be reached. Run `devrag download-models` to fetch the model "
+                        f"bundle, or set retrieval.rerank: false to disable reranking."
                     ) from exc
         finally:
             tf_logging.set_verbosity(prev_tf)

@@ -74,5 +74,5 @@ def test_reranker_clear_error_when_uncached_and_offline(mock_ce_class):
         OSError("not cached"),
         RuntimeError("Cannot send a request, as the client has been closed."),
     ]
-    with pytest.raises(RuntimeError, match="not cached locally and huggingface.co"):
+    with pytest.raises(RuntimeError, match="devrag download-models"):
         Reranker(model_name="cross-encoder/ms-marco-MiniLM-L-6-v2")
