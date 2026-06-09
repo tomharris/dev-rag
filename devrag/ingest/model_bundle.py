@@ -126,5 +126,13 @@ def ensure_models(config) -> None:
         return
     url, _ = _resolve_url_and_sha(config)
     print(f"DevRAG models not found locally; downloading bundle (~88 MB) from {url} ...", file=sys.stderr)
-    download_bundle(config)
+    try:
+        download_bundle(config)
+    except Exception as exc:
+        # Best-effort: a failed auto-download must not crash the command. Fall
+        # through to the model loaders, which load from cache, try HF directly,
+        # or raise their own clear "run `devrag download-models`" error.
+        logger.warning("Model bundle auto-download failed (%s); falling back to model loaders.", exc)
+        print(f"DevRAG model bundle auto-download failed: {exc}", file=sys.stderr)
+        return
     print("DevRAG models ready.", file=sys.stderr)
