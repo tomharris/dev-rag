@@ -77,3 +77,12 @@ def test_load_config_user_dir_fallback(tmp_dir, monkeypatch):
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_dir / "user_config_parent"))
     config = load_config(project_dir=tmp_dir, user_config_dir=user_config_dir)
     assert config.embedding.model == "custom-model"
+
+
+def test_model_bundle_and_cache_dir_defaults():
+    from devrag.config import DevragConfig
+    c = DevragConfig()
+    assert c.sparse_embedding.cache_dir == ""
+    assert c.network.model_bundle_url == ""
+    assert c.network.model_bundle_sha256 == ""
+    assert c.network.auto_download_models is True
