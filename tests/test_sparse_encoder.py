@@ -51,6 +51,17 @@ def test_encode_query_empty_returns_empty_sparse():
     assert result.values == []
 
 
+def test_sparse_encoder_prefers_local_cache_then_falls_back():
+    online_model = MagicMock()
+    with patch("fastembed.SparseTextEmbedding", side_effect=[OSError("not cached"), online_model]) as mock_ste:
+        enc = BM25SparseEncoder(model_name="Qdrant/bm25")
+        model = enc._get_model()
+    assert mock_ste.call_count == 2
+    assert mock_ste.call_args_list[0].kwargs.get("local_files_only") is True
+    assert "local_files_only" not in mock_ste.call_args_list[1].kwargs
+    assert model is online_model
+
+
 def test_encode_query_produces_sparse_vector():
     enc = BM25SparseEncoder()
     fake_model = MagicMock()

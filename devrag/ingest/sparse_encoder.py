@@ -16,7 +16,14 @@ class BM25SparseEncoder:
     def _get_model(self):
         if self._model is None:
             from fastembed import SparseTextEmbedding
-            self._model = SparseTextEmbedding(model_name=self.model_name)
+            # Prefer the local HF cache so a network that blocks huggingface.co
+            # (or the huggingface_hub closed-client bug on a metadata refresh)
+            # can't break loading an already-downloaded model.
+            try:
+                self._model = SparseTextEmbedding(model_name=self.model_name, local_files_only=True)
+            except Exception:
+                # Not cached — allow a network download (first run, HF reachable).
+                self._model = SparseTextEmbedding(model_name=self.model_name)
         return self._model
 
     def encode(self, texts: list[str]) -> list[SparseVector]:
