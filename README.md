@@ -58,6 +58,33 @@ devrag status
   ollama pull nomic-embed-text
   ```
 
+### Models on a network that blocks Hugging Face
+
+DevRAG's reranker and BM25 models come from Hugging Face. On first use it
+auto-downloads a self-hosted bundle of both models from a dev-rag GitHub release
+(reachable even when huggingface.co is blocked) and caches them locally; later
+runs load offline. To fetch them explicitly:
+
+```bash
+devrag download-models          # fetch/refresh the model bundle
+devrag download-models --force  # re-download even if cached
+```
+
+Overrides (in `~/.config/devrag/devrag.yaml` or `.devrag.yaml`):
+
+```yaml
+network:
+  auto_download_models: true            # set false to disable auto-fetch (CI/air-gapped)
+  model_bundle_url: ""                  # internal/air-gapped mirror of the bundle
+  model_bundle_sha256: ""               # expected checksum for a custom model_bundle_url
+sparse_embedding:
+  cache_dir: ""                         # FastEmbed cache; "" = ~/.cache/devrag/fastembed
+```
+
+Note: the bundle carries the **default** model names. If you override
+`retrieval.reranker_model` or `sparse_embedding.model`, you need Hugging Face (or
+a faithful mirror) access for your chosen model.
+
 ## CLI Reference
 
 ### Search
