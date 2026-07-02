@@ -2,7 +2,6 @@ from unittest.mock import MagicMock
 
 from devrag.ingest.slite_indexer import (
     SliteIndexer,
-    _cursor_to_days_ago,
     _make_chunk_id,
     _truncate_text,
     chunk_slite_page,
@@ -12,14 +11,18 @@ from devrag.utils.slite_client import SliteClient
 
 def _make_note(note_id="page-1", title="Getting Started", content=None,
                url="https://app.slite.com/p/page-1",
-               updated_at="2026-04-01T12:00:00Z"):
+               last_edited_at="2026-04-01T12:00:00Z",
+               updated_at="2026-06-30T12:00:00Z"):
     if content is None:
         content = "# Introduction\n\nWelcome to the team.\n\n## Setup\n\nRun `make install` to get started."
     return {
         "id": note_id,
         "title": title,
         "url": url,
+        # updatedAt is a volatile popularity timestamp; lastEditedAt is the
+        # real content-edit time that drives incremental sync.
         "updatedAt": updated_at,
+        "lastEditedAt": last_edited_at,
         "content": content,
     }
 
@@ -43,6 +46,8 @@ def test_chunk_slite_page_metadata():
         assert chunk.metadata["page_title"] == "Getting Started"
         assert chunk.metadata["page_url"] == "https://app.slite.com/p/page-1"
         assert chunk.metadata["chunk_type"] == "slite_page"
+        # updated_at payload reflects the content-edit time (lastEditedAt),
+        # not the volatile updatedAt popularity timestamp.
         assert chunk.metadata["updated_at"] == "2026-04-01T12:00:00Z"
 
 
@@ -91,28 +96,6 @@ def test_truncate_text_long_text_truncated():
     assert len(result) == 2048 + len("\n... (truncated)")
 
 
-# --- Cursor conversion tests ---
-
-def test_cursor_to_days_ago_recent():
-    from datetime import datetime, timezone, timedelta
-    yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
-    result = _cursor_to_days_ago(yesterday)
-    assert result >= 1
-    assert result <= 3  # 1 day + 1 buffer
-
-
-def test_cursor_to_days_ago_old():
-    result = _cursor_to_days_ago("2026-01-01T00:00:00Z")
-    assert result > 90  # More than 90 days ago from April 2026
-
-
-def test_cursor_to_days_ago_minimum_is_one():
-    from datetime import datetime, timezone
-    now = datetime.now(timezone.utc).isoformat()
-    result = _cursor_to_days_ago(now)
-    assert result >= 1
-
-
 # --- Make chunk ID tests ---
 
 def test_make_chunk_id_deterministic():
@@ -143,7 +126,7 @@ def test_slite_indexer_sync(tmp_dir, sparse_encoder):
     mock_slite = MagicMock(spec=SliteClient)
     mock_slite.list_notes.return_value = iter([
         {"id": "page-1", "title": "Onboarding", "url": "https://app.slite.com/p/page-1",
-         "updatedAt": "2026-04-01T12:00:00Z"},
+         "lastEditedAt": "2026-04-01T12:00:00Z", "updatedAt": "2026-06-30T12:00:00Z"},
     ])
     mock_slite.get_note.return_value = {
         "id": "page-1", "title": "Onboarding",
@@ -157,6 +140,7 @@ def test_slite_indexer_sync(tmp_dir, sparse_encoder):
     assert stats.pages_indexed == 1
     assert stats.chunks_created >= 2
     assert store.count("slite_pages") >= 2
+    # Cursor tracks the content-edit time, not the popularity timestamp.
     assert meta.get_slite_sync_cursor("default") == "2026-04-01T12:00:00Z"
 
 
@@ -170,7 +154,8 @@ def test_slite_indexer_skips_empty_pages(tmp_dir, sparse_encoder):
 
     mock_slite = MagicMock(spec=SliteClient)
     mock_slite.list_notes.return_value = iter([
-        {"id": "page-empty", "title": "Empty", "url": "...", "updatedAt": "2026-04-01T12:00:00Z"},
+        {"id": "page-empty", "title": "Empty", "url": "...",
+         "lastEditedAt": "2026-04-01T12:00:00Z", "updatedAt": "2026-06-30T12:00:00Z"},
     ])
     mock_slite.get_note.return_value = {"id": "page-empty", "title": "Empty", "content": ""}
 
@@ -190,41 +175,78 @@ def test_slite_indexer_incremental_sync(tmp_dir, sparse_encoder):
     embedder.embed = MagicMock(side_effect=lambda texts: [[0.1] * 768 for _ in texts])
 
     mock_slite = MagicMock(spec=SliteClient)
-    mock_slite.list_notes.return_value = iter([
-        {"id": "page-1", "title": "Guide", "url": "...", "updatedAt": "2026-04-01T12:00:00Z"},
-    ])
     mock_slite.get_note.return_value = {
         "id": "page-1", "title": "Guide", "content": "# Guide\n\nSome content.",
     }
 
     indexer = SliteIndexer(store, meta, embedder, sparse_encoder, mock_slite)
 
-    # First sync — indexes the page, sets cursor
+    def _note(last_edited, updated="2026-06-30T12:00:00Z"):
+        return {"id": "page-1", "title": "Guide", "url": "...",
+                "lastEditedAt": last_edited, "updatedAt": updated}
+
+    # First sync — indexes the page, sets cursor to lastEditedAt
+    mock_slite.list_notes.return_value = iter([_note("2026-04-01T12:00:00Z")])
     stats1 = indexer.sync(since_days=90)
     assert stats1.pages_indexed == 1
-    cursor_after_first = meta.get_slite_sync_cursor("default")
-    assert cursor_after_first == "2026-04-01T12:00:00Z"
+    assert meta.get_slite_sync_cursor("default") == "2026-04-01T12:00:00Z"
 
-    # Second sync — API returns the same page with same updatedAt; client-side filter should skip it
-    mock_slite.list_notes.return_value = iter([
-        {"id": "page-1", "title": "Guide", "url": "...", "updatedAt": "2026-04-01T12:00:00Z"},
-    ])
+    # Second sync — same lastEditedAt (content unchanged); skip client-side
+    mock_slite.list_notes.return_value = iter([_note("2026-04-01T12:00:00Z")])
     stats2 = indexer.sync(since_days=90)
     assert stats2.pages_indexed == 0
     assert stats2.pages_skipped == 1
     assert stats2.pages_fetched == 0
-    # since_days_ago should be derived from cursor (much smaller than default 90)
-    call_args = mock_slite.list_notes.call_args
-    assert 0 < call_args[1]["since_days_ago"] < 90
+    # We no longer narrow the fetch by sinceDaysAgo — list_notes is called with
+    # only the channel filter.
+    call_kwargs = mock_slite.list_notes.call_args.kwargs
+    assert "since_days_ago" not in call_kwargs
 
-    # Third sync — page has a newer updatedAt; should be re-indexed
-    mock_slite.list_notes.return_value = iter([
-        {"id": "page-1", "title": "Guide", "url": "...", "updatedAt": "2026-04-10T12:00:00Z"},
-    ])
+    # Third sync — content edited (newer lastEditedAt); re-index and advance cursor
+    mock_slite.list_notes.return_value = iter([_note("2026-04-10T12:00:00Z")])
     stats3 = indexer.sync(since_days=90)
     assert stats3.pages_indexed == 1
     assert stats3.pages_skipped == 0
     assert meta.get_slite_sync_cursor("default") == "2026-04-10T12:00:00Z"
+
+
+def test_slite_indexer_ignores_updatedat_churn(tmp_dir, sparse_encoder):
+    """Regression: a note whose updatedAt is bumped to 'now' but whose
+    lastEditedAt is unchanged must be skipped, not re-indexed."""
+    from devrag.stores.qdrant_store import QdrantStore
+    from devrag.stores.metadata_db import MetadataDB
+    store = QdrantStore(path=str(tmp_dir / "qdrant"), embedding_dim=768)
+    meta = MetadataDB(str(tmp_dir / "meta.db"))
+    embedder = MagicMock()
+    embedder.embed = MagicMock(side_effect=lambda texts: [[0.1] * 768 for _ in texts])
+
+    mock_slite = MagicMock(spec=SliteClient)
+    mock_slite.get_note.return_value = {
+        "id": "page-1", "title": "Guide", "content": "# Guide\n\nSome content.",
+    }
+
+    indexer = SliteIndexer(store, meta, embedder, sparse_encoder, mock_slite)
+
+    # First sync sets the cursor from lastEditedAt.
+    mock_slite.list_notes.return_value = iter([
+        {"id": "page-1", "title": "Guide", "url": "...",
+         "lastEditedAt": "2026-01-01T00:00:00Z", "updatedAt": "2026-05-01T00:00:00Z"},
+    ])
+    indexer.sync(since_days=90)
+    assert meta.get_slite_sync_cursor("default") == "2026-01-01T00:00:00Z"
+
+    # Second sync: updatedAt jumps far forward (popularity churn) but the
+    # content edit time is unchanged — must be skipped.
+    mock_slite.list_notes.return_value = iter([
+        {"id": "page-1", "title": "Guide", "url": "...",
+         "lastEditedAt": "2026-01-01T00:00:00Z", "updatedAt": "2026-07-02T00:00:00Z"},
+    ])
+    stats = indexer.sync(since_days=90)
+    assert stats.pages_indexed == 0
+    assert stats.pages_skipped == 1
+    assert stats.pages_fetched == 0
+    # Cursor stays put — no phantom advancement from updatedAt.
+    assert meta.get_slite_sync_cursor("default") == "2026-01-01T00:00:00Z"
 
 
 def test_slite_indexer_channel_filtering(tmp_dir, sparse_encoder):

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import logging
-from datetime import datetime, timezone
 
 import httpx
 
@@ -35,7 +34,7 @@ def chunk_slite_page(
     page_id = note["id"]
     title = note.get("title", "")
     url = note.get("url", "")
-    updated_at = note.get("updatedAt", "")
+    updated_at = note.get("lastEditedAt", "")
     content = note.get("content", "")
     if not content or not content.strip():
         return []
@@ -117,18 +116,6 @@ def chunk_slite_page(
     return chunks
 
 
-def _cursor_to_days_ago(cursor_iso: str) -> int:
-    """Convert an ISO timestamp cursor to a sinceDaysAgo integer.
-
-    Adds a 1-day overlap buffer to avoid missing pages updated
-    near the cursor boundary.
-    """
-    cursor_dt = datetime.fromisoformat(cursor_iso.replace("Z", "+00:00"))
-    now = datetime.now(timezone.utc)
-    delta = now - cursor_dt
-    return max(delta.days + 1, 1)
-
-
 class SliteIndexer:
     def __init__(
         self,
@@ -151,32 +138,43 @@ class SliteIndexer:
         self.channel_ids = channel_ids or []
 
     def sync(self, since_days: int = 90) -> SliteSyncStats:
+        """Incrementally sync Slite pages.
+
+        Incrementality is keyed on each note's ``lastEditedAt`` (the actual
+        content-edit time), NOT ``updatedAt`` — the latter is a volatile
+        metadata/popularity timestamp that Slite bumps for essentially every
+        note, so using it re-indexes the whole workspace on every run.
+
+        The full note list is paginated and filtered client-side on
+        ``lastEditedAt``. ``since_days`` is accepted for CLI/MCP signature
+        compatibility but no longer narrows the fetch (the API's
+        ``sinceDaysAgo`` is a popularity window, not an edit filter, so it
+        could silently drop edited-but-unpopular notes).
+        """
         stats = SliteSyncStats()
         cursor_key = "default"
 
         cursor = self.metadata_db.get_slite_sync_cursor(cursor_key)
-        if cursor:
-            since_days_ago = _cursor_to_days_ago(cursor)
-        else:
-            since_days_ago = since_days
 
-        latest_updated: str | None = None
+        latest_edited: str | None = None
 
         for note in self.slite.list_notes(
             channel_ids=self.channel_ids or None,
-            since_days_ago=since_days_ago,
         ):
             note_id = note["id"]
-            updated_at = note.get("updatedAt", "")
+            last_edited = note.get("lastEditedAt", "")
 
-            if cursor and updated_at and updated_at <= cursor:
+            # Skip only when we have a reliable edit time that predates the
+            # cursor. A missing lastEditedAt falls through and re-indexes so a
+            # field gap can never silently drop an update.
+            if cursor and last_edited and last_edited <= cursor:
                 stats.pages_skipped += 1
                 continue
 
             stats.pages_fetched += 1
 
-            if updated_at and (latest_updated is None or updated_at > latest_updated):
-                latest_updated = updated_at
+            if last_edited and (latest_edited is None or last_edited > latest_edited):
+                latest_edited = last_edited
 
             try:
                 full_note = self.slite.get_note(note_id, fmt="md")
@@ -202,7 +200,7 @@ class SliteIndexer:
 
             full_note["title"] = full_note.get("title", note.get("title", ""))
             full_note["url"] = full_note.get("url", note.get("url", ""))
-            full_note["updatedAt"] = updated_at
+            full_note["lastEditedAt"] = last_edited
 
             chunks = chunk_slite_page(
                 full_note,
@@ -231,7 +229,7 @@ class SliteIndexer:
             stats.pages_indexed += 1
             stats.chunks_created += len(chunks)
 
-        if latest_updated:
-            self.metadata_db.set_slite_sync_cursor(cursor_key, latest_updated)
+        if latest_edited:
+            self.metadata_db.set_slite_sync_cursor(cursor_key, latest_edited)
 
         return stats

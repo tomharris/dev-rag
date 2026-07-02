@@ -43,7 +43,15 @@ class SliteClient:
     ) -> Iterator[dict]:
         """Paginated listing of notes via the knowledge-management endpoint.
 
-        Yields individual note dicts (id, title, url, updatedAt).
+        Yields individual note dicts. Each includes ``id``, ``title``, ``url``,
+        ``updatedAt`` (a volatile metadata/popularity timestamp), and
+        ``lastEditedAt`` (the actual content-edit time — use this for
+        incremental sync).
+
+        Note: ``since_days_ago`` maps to the API's ``sinceDaysAgo``, which is a
+        popularity window rather than an edit filter, so it does not reliably
+        narrow by modification time; callers doing incremental sync should
+        filter client-side on ``lastEditedAt`` instead.
         """
         while True:
             params: dict = {"first": 50}
