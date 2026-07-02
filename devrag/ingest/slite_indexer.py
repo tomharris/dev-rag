@@ -156,12 +156,17 @@ class SliteIndexer:
 
         cursor = self.metadata_db.get_slite_sync_cursor(cursor_key)
 
-        latest_edited: str | None = None
-
+        # Buffer the notes that pass the incremental filter, then process them in
+        # ascending lastEditedAt order so the cursor can be committed after each
+        # page. Because list_notes' order is unspecified and the skip filter is a
+        # `<= cursor` high-water mark, we can only safely advance the cursor to a
+        # timestamp once every note at or below it has been indexed — sorting
+        # ascending makes that a simple prefix. Progress therefore survives a
+        # mid-sweep failure (e.g. a 429) instead of being discarded wholesale.
+        candidates: list[dict] = []
         for note in self.slite.list_notes(
             channel_ids=self.channel_ids or None,
         ):
-            note_id = note["id"]
             last_edited = note.get("lastEditedAt", "")
 
             # Skip only when we have a reliable edit time that predates the
@@ -171,65 +176,80 @@ class SliteIndexer:
                 stats.pages_skipped += 1
                 continue
 
-            stats.pages_fetched += 1
+            candidates.append(note)
 
-            if last_edited and (latest_edited is None or last_edited > latest_edited):
-                latest_edited = last_edited
+        # Empty-string lastEditedAt sorts first; those notes are re-indexed on
+        # every run and never advance the cursor.
+        candidates.sort(key=lambda n: n.get("lastEditedAt", ""))
+
+        for i, note in enumerate(candidates):
+            note_id = note["id"]
+            last_edited = note.get("lastEditedAt", "")
+
+            stats.pages_fetched += 1
 
             try:
                 full_note = self.slite.get_note(note_id, fmt="md")
             except httpx.HTTPStatusError as exc:
-                if exc.response.status_code >= 500:
-                    logger.warning("Slite API %d for note %s, skipping", exc.response.status_code, note_id)
-                    stats.pages_errored += 1
-                    continue
-                raise
-            except httpx.TimeoutException:
-                logger.warning("Slite API timeout for note %s, skipping", note_id)
+                status = exc.response.status_code
+                # 429/5xx survived the client's retries — a transient outage.
+                # Stop the sweep so the next run resumes at this note; the cursor
+                # is already committed up to the last success.
+                if status == 429 or status >= 500:
+                    logger.warning("Slite API %d for note %s, stopping sweep to resume later", status, note_id)
+                    break
+                # Other 4xx (e.g. 404 for a note deleted between list and fetch):
+                # genuinely unavailable, skip and continue.
+                logger.warning("Slite API %d for note %s, skipping", status, note_id)
                 stats.pages_errored += 1
                 continue
+            except httpx.TimeoutException:
+                logger.warning("Slite API timeout for note %s, stopping sweep to resume later", note_id)
+                break
             content = full_note.get("content", "")
-            if not content or not content.strip():
+            if content and content.strip():
+                old_chunk_ids = self.metadata_db.get_chunks_for_slite_page(cursor_key, note_id)
+                if old_chunk_ids:
+                    self.vector_store.delete("slite_pages", old_chunk_ids)
+                    self.metadata_db.delete_chunks_for_slite_page(cursor_key, note_id)
+
+                full_note["title"] = full_note.get("title", note.get("title", ""))
+                full_note["url"] = full_note.get("url", note.get("url", ""))
+                full_note["lastEditedAt"] = last_edited
+
+                chunks = chunk_slite_page(
+                    full_note,
+                    max_tokens=self.chunk_max_tokens,
+                    overlap_tokens=self.chunk_overlap_tokens,
+                )
+                if chunks:
+                    texts = [_truncate_text(c.text, self.chunk_max_tokens) for c in chunks]
+                    embeddings = self.embedder.embed(texts)
+                    sparse_embeddings = self.sparse_encoder.encode(texts)
+                    self.vector_store.upsert(
+                        collection="slite_pages",
+                        ids=[c.id for c in chunks],
+                        embeddings=embeddings,
+                        documents=texts,
+                        metadatas=[c.metadata for c in chunks],
+                        sparse_embeddings=sparse_embeddings,
+                        wait=False,
+                    )
+                    for chunk in chunks:
+                        self.metadata_db.set_slite_chunk_source(chunk.id, cursor_key, note_id)
+                    stats.pages_indexed += 1
+                    stats.chunks_created += len(chunks)
+                else:
+                    stats.pages_skipped += 1
+            else:
                 stats.pages_skipped += 1
-                continue
 
-            old_chunk_ids = self.metadata_db.get_chunks_for_slite_page(cursor_key, note_id)
-            if old_chunk_ids:
-                self.vector_store.delete("slite_pages", old_chunk_ids)
-                self.metadata_db.delete_chunks_for_slite_page(cursor_key, note_id)
-
-            full_note["title"] = full_note.get("title", note.get("title", ""))
-            full_note["url"] = full_note.get("url", note.get("url", ""))
-            full_note["lastEditedAt"] = last_edited
-
-            chunks = chunk_slite_page(
-                full_note,
-                max_tokens=self.chunk_max_tokens,
-                overlap_tokens=self.chunk_overlap_tokens,
-            )
-            if not chunks:
-                stats.pages_skipped += 1
-                continue
-
-            texts = [_truncate_text(c.text, self.chunk_max_tokens) for c in chunks]
-            embeddings = self.embedder.embed(texts)
-            sparse_embeddings = self.sparse_encoder.encode(texts)
-            self.vector_store.upsert(
-                collection="slite_pages",
-                ids=[c.id for c in chunks],
-                embeddings=embeddings,
-                documents=texts,
-                metadatas=[c.metadata for c in chunks],
-                sparse_embeddings=sparse_embeddings,
-                wait=False,
-            )
-            for chunk in chunks:
-                self.metadata_db.set_slite_chunk_source(chunk.id, cursor_key, note_id)
-
-            stats.pages_indexed += 1
-            stats.chunks_created += len(chunks)
-
-        if latest_edited:
-            self.metadata_db.set_slite_sync_cursor(cursor_key, latest_edited)
+            # Advance the cursor to this note's edit time only once no unprocessed
+            # note shares it — otherwise the `<= cursor` filter would drop the
+            # tied note on the next run. A missing lastEditedAt never advances.
+            is_last = i == len(candidates) - 1
+            next_newer = is_last or candidates[i + 1].get("lastEditedAt", "") > last_edited
+            if last_edited and next_newer:
+                self.metadata_db.set_slite_sync_cursor(cursor_key, last_edited)
 
         return stats

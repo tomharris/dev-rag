@@ -395,7 +395,8 @@ def index_slite(
     embedder = _make_embedder(config)
     sparse_encoder = _make_sparse_encoder(config)
     days = int(since.rstrip("d"))
-    slite = SliteClient(api_token=token, verify=resolve_verify(config.network.ca_bundle))
+    slite = SliteClient(api_token=token, verify=resolve_verify(config.network.ca_bundle),
+                        max_retries=config.slite.max_retries)
     indexer = SliteIndexer(store, meta, embedder, sparse_encoder, slite, chunk_max_tokens=config.slite.chunk_max_tokens,
                            chunk_overlap_tokens=config.slite.chunk_overlap_tokens,
                            channel_ids=config.slite.channel_ids)
