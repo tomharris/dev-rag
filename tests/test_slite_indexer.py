@@ -1,5 +1,7 @@
 from unittest.mock import MagicMock
 
+import httpx
+
 from devrag.ingest.slite_indexer import (
     SliteIndexer,
     _make_chunk_id,
@@ -247,6 +249,73 @@ def test_slite_indexer_ignores_updatedat_churn(tmp_dir, sparse_encoder):
     assert stats.pages_fetched == 0
     # Cursor stays put — no phantom advancement from updatedAt.
     assert meta.get_slite_sync_cursor("default") == "2026-01-01T00:00:00Z"
+
+
+def _429():
+    return httpx.HTTPStatusError(
+        "rate limited",
+        request=httpx.Request("GET", "https://api.slite.com/v1/notes/x"),
+        response=httpx.Response(429),
+    )
+
+
+def test_slite_indexer_saves_progress_on_mid_sweep_429(tmp_dir, sparse_encoder):
+    """A 429 partway through the sweep must not discard progress: pages indexed
+    before the failure stay indexed and the cursor advances to the last success."""
+    from devrag.stores.qdrant_store import QdrantStore
+    from devrag.stores.metadata_db import MetadataDB
+    store = QdrantStore(path=str(tmp_dir / "qdrant"), embedding_dim=768)
+    meta = MetadataDB(str(tmp_dir / "meta.db"))
+    embedder = MagicMock()
+    embedder.embed = MagicMock(side_effect=lambda texts: [[0.1] * 768 for _ in texts])
+
+    mock_slite = MagicMock(spec=SliteClient)
+    mock_slite.list_notes.return_value = iter([
+        _make_note("p1", last_edited_at="2026-04-01T12:00:00Z"),
+        _make_note("p2", last_edited_at="2026-04-02T12:00:00Z"),
+        _make_note("p3", last_edited_at="2026-04-03T12:00:00Z"),
+    ])
+    # First two fetches succeed; the third 429s (survived the client's retries).
+    mock_slite.get_note.side_effect = [
+        {"id": "p1", "content": "# One\n\nBody."},
+        {"id": "p2", "content": "# Two\n\nBody."},
+        _429(),
+    ]
+
+    indexer = SliteIndexer(store, meta, embedder, sparse_encoder, mock_slite)
+    stats = indexer.sync(since_days=90)  # must not raise
+
+    assert stats.pages_indexed == 2
+    # Cursor sits at the last successfully indexed note, not the failed third.
+    assert meta.get_slite_sync_cursor("default") == "2026-04-02T12:00:00Z"
+
+
+def test_slite_indexer_cursor_tie_safe_on_failure(tmp_dir, sparse_encoder):
+    """Two notes share a lastEditedAt; if the second fails, the cursor must NOT
+    advance to the shared timestamp (else the `<= cursor` filter drops it)."""
+    from devrag.stores.qdrant_store import QdrantStore
+    from devrag.stores.metadata_db import MetadataDB
+    store = QdrantStore(path=str(tmp_dir / "qdrant"), embedding_dim=768)
+    meta = MetadataDB(str(tmp_dir / "meta.db"))
+    embedder = MagicMock()
+    embedder.embed = MagicMock(side_effect=lambda texts: [[0.1] * 768 for _ in texts])
+
+    mock_slite = MagicMock(spec=SliteClient)
+    mock_slite.list_notes.return_value = iter([
+        _make_note("p1", last_edited_at="2026-04-01T12:00:00Z"),
+        _make_note("p2", last_edited_at="2026-04-01T12:00:00Z"),
+    ])
+    mock_slite.get_note.side_effect = [
+        {"id": "p1", "content": "# One\n\nBody."},
+        _429(),
+    ]
+
+    indexer = SliteIndexer(store, meta, embedder, sparse_encoder, mock_slite)
+    stats = indexer.sync(since_days=90)
+
+    assert stats.pages_indexed == 1
+    # No cursor was committed — the tied second note is still pending.
+    assert meta.get_slite_sync_cursor("default") is None
 
 
 def test_slite_indexer_channel_filtering(tmp_dir, sparse_encoder):

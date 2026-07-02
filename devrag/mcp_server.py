@@ -429,7 +429,8 @@ def sync_slite(since_days: int = 90) -> str:
     token = os.environ.get(config.slite.slite_token_env)
     if not token:
         return f"Error: {config.slite.slite_token_env} environment variable not set."
-    slite = SliteClient(api_token=token, verify=resolve_verify(config.network.ca_bundle))
+    slite = SliteClient(api_token=token, verify=resolve_verify(config.network.ca_bundle),
+                        max_retries=config.slite.max_retries)
     indexer = SliteIndexer(
         vector_store=_get_vector_store(),
         metadata_db=_get_metadata_db(),
