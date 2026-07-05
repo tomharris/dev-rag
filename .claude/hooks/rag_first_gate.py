@@ -15,11 +15,17 @@ GATED_TOOLS = {"Grep", "Glob"}
 GATED_AGENT_SUBTYPES = {"Explore", "general-purpose"}
 SEARCH_TOOLS = {"mcp__devrag__search"}
 BLOCK_MSG = (
-    "rag-first gate: call `mcp__devrag__search` before using "
-    "Grep/Glob/Agent for codebase exploration. After it runs, "
-    "this gate releases for the rest of the turn. If rag returns "
-    "nothing useful, run mcp__devrag__search with a different query "
-    "to release the gate, then fall back to keyword search."
+    "rag-first gate: blocked a codebase-search tool because no rag search has "
+    "run this turn. Pick the right path:\n"
+    "- Semantic question (how/why/where across the codebase): call "
+    "`mcp__devrag__search` first — it has PR history and semantic recall that "
+    "keyword search misses, and it releases this gate for the rest of the turn.\n"
+    "- Reading a KNOWN file or listing a SPECIFIC dir: that's fine, use `Read` "
+    "directly — targeted lookups don't need rag.\n"
+    "- Do NOT dodge this gate by running grep/rg/find via Bash on a semantic "
+    "question just to avoid rag; that's the exact case rag exists for.\n"
+    "If rag returns nothing useful, re-run `mcp__devrag__search` with a different "
+    "query to release the gate, then fall back to keyword search."
 )
 
 
