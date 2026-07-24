@@ -4,7 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Search Strategy
 
-Always use `/rag-search` (DevRAG) as the FIRST tool when answering codebase questions. Only fall back to Grep/Glob/Explore if RAG results are insufficient. DevRAG has semantic understanding of code structure, PR history, and documentation that keyword search misses.
+Prefer `mcp__devrag__search` (DevRAG) for semantic codebase questions — how something works, why it changed, where a concept lives, how components connect. It indexes PR history, issues, docs, and AST-aware code chunks that keyword search cannot reach.
+
+Use Grep/Glob directly for literal lookups: an exact symbol, a config key, a string you already know appears verbatim. Use Read for a file whose path you already have. Falling back from RAG to keyword search when results are thin is expected, not a failure.
 
 ## Build & Development Commands
 
@@ -80,7 +82,7 @@ Nested dataclass hierarchy in `devrag/config.py`. Loaded from `~/.config/devrag/
 - **Per-file indexing resilience**: Both `CodeIndexer.index_repo` and `DocIndexer` isolate each file — a single file that fails to embed/upsert is logged and counted in `files_failed` rather than propagating, so one bad file can't abort a repo (or, under `index refresh`, every later repo). Both indexers persist the file hash **only after** a successful upsert, so a failed file is retried on the next run instead of being marked done.
 - **Git-aware file discovery**: `devrag/utils/git.py` (`discover_files`) respects `.gitignore` (via `git ls-files --exclude-standard`) and `.devragignore`. Both the `exclude_patterns` (defaults + `code.exclude_patterns`) and `.devragignore` lines are evaluated with **true gitignore semantics** via `pathspec.GitIgnoreSpec` (directory patterns, anchoring, `**`, and `!` negation) — not `fnmatch`, which silently ignored directory patterns like `docs/internal/`. The same `discover_files` chokepoint serves code (`CodeIndexer.index_repo`) and docs (`DocIndexer.index_repo_docs`), so the rules apply identically to both.
 - GitHub tokens come from env vars (configured via `prs.github_token_env` / `issues.github_token_env`), never stored in config files. Jira credentials similarly use `jira.jira_email_env` / `jira.jira_token_env`. Slite uses `slite.slite_token_env` (default: `SLITE_TOKEN`). Slack uses `slack.slack_token_env` / `slack.slack_cookie_env` (defaults: `SLACK_XOXC_TOKEN` / `SLACK_XOXD_COOKIE`) — browser session credentials, env-only, never in config.
-- **RAG-first routing**: The `rag-first` skill (`.claude/skills/rag-first/`) auto-triggers on codebase questions. A per-turn block gate at `.claude/hooks/rag_first_gate.py` hard-denies the *first* `Grep`/`Glob`/`Agent`(`Explore`|`general-purpose`) of a turn unless `mcp__devrag__search` has already run, then releases for the rest of the turn so legitimate fallback still works. The script is tracked, but hook registration lives in `.claude/settings.local.json` (per-user) — see README "Claude Code Integration" for the install snippet.
+- **RAG-first routing**: The `rag-first` skill (`.claude/skills/rag-first/`) auto-triggers on codebase questions and routes them through `mcp__devrag__search` before keyword search. Guidance only — there is no enforcement hook. (A per-turn `PreToolUse` block gate was tried and removed: it gated on tool *name* rather than query *intent*, so it blocked legitimate literal lookups and turns that weren't searches at all, while `Bash(grep)` remained an unenforceable escape hatch.)
 
 ## Dependencies
 

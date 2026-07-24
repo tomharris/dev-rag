@@ -22,8 +22,8 @@ Before using Grep, Glob, Explore agents, or other codebase exploration tools, AL
 
 ## Key Guidelines
 
-- DevRAG searches across four collections: code chunks, PR diffs, PR discussions, and documents. A single query searches all relevant collections.
+- DevRAG searches across eleven collections: code chunks, PR diffs/discussions, issue descriptions/discussions, Jira descriptions/discussions, Slite pages, Slack messages, documents, and session logs. A single query routes to whichever are relevant.
 - For "why did this change?" questions, RAG is especially powerful — it has PR history and review comments that Grep cannot find.
 - For "where is X defined?" questions, RAG's AST-aware code chunks often give better results than grep patterns.
-- Do NOT skip RAG even for seemingly simple lookups — the semantic search may surface related context you wouldn't have found with keywords.
+- For literal lookups — an exact symbol name, a config key, a string known to appear verbatim — Grep is the right tool and this skill does not apply. RAG's advantage is semantic and historical recall, not exact matching.
 - If the DevRAG MCP server is not available (tool call fails), fall back to direct exploration without retrying.

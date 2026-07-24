@@ -282,44 +282,7 @@ The repo includes Claude Code skills in `.claude/skills/`:
 
 The `rag-first` skill fires automatically when Claude detects a codebase question — no slash command needed.
 
-For a hard safety net, the repo ships `.claude/hooks/rag_first_gate.py` — a per-turn block gate that **denies** the first `Grep`, `Glob`, or `Agent`(`Explore`/`general-purpose`) call of a turn until `mcp__devrag__search` has run, then releases for the rest of the turn. The script is tracked, but hook registration is per-user. To enable it, add this `hooks` block to your `.claude/settings.local.json` (alongside `permissions`):
-
-```jsonc
-"hooks": {
-  "PreToolUse": [
-    {
-      "matcher": "Grep|Glob|Agent",
-      "hooks": [{
-        "type": "command",
-        "command": "python3 ${CLAUDE_PROJECT_DIR}/.claude/hooks/rag_first_gate.py",
-        "timeout": 5
-      }]
-    }
-  ],
-  "PostToolUse": [
-    {
-      "matcher": "mcp__devrag__search",
-      "hooks": [{
-        "type": "command",
-        "command": "python3 ${CLAUDE_PROJECT_DIR}/.claude/hooks/rag_first_gate.py",
-        "timeout": 5
-      }]
-    }
-  ],
-  "UserPromptSubmit": [
-    {
-      "matcher": "",
-      "hooks": [{
-        "type": "command",
-        "command": "python3 ${CLAUDE_PROJECT_DIR}/.claude/hooks/rag_first_gate.py",
-        "timeout": 5
-      }]
-    }
-  ]
-}
-```
-
-Restart your Claude Code session after editing so the hooks register.
+RAG search is guidance, not enforcement — see the Search Strategy section of `CLAUDE.md` for when DevRAG beats keyword search and when Grep is the right tool.
 
 ## Architecture
 
