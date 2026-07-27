@@ -132,12 +132,14 @@ def format_search_results(results: list[SearchResult]) -> str:
             lines.append("")
         else:
             file_path = r.metadata.get("file_path", "unknown")
-            line_range = r.metadata.get("line_range", [])
+            # line_range is a pre-formatted "start-end" string, not a pair —
+            # indexing it yields the first two *characters*.
+            line_range = r.metadata.get("line_range", "")
             entity_name = r.metadata.get("entity_name", "")
             language = r.metadata.get("language", "")
             location = file_path
             if line_range:
-                location += f":{line_range[0]}-{line_range[1]}"
+                location += f":{line_range}"
             lines.append(f"### {i}. {entity_name} ({location})")
             lines.append(f"```{language}")
             text_lines = r.text.strip().split("\n")

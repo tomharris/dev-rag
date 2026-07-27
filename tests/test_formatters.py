@@ -3,17 +3,30 @@ from devrag.types import SearchResult, IndexStats
 
 
 def test_format_search_results():
+    # line_range is the pre-formatted "start-end" string the code indexer emits.
     results = [
         SearchResult(chunk_id="c1", text="def authenticate(user, pwd):\n    return check(user, pwd)",
-            score=0.95, metadata={"file_path": "src/auth.py", "line_range": [10, 15], "entity_name": "authenticate"}),
+            score=0.95, metadata={"file_path": "src/auth.py", "line_range": "10-15", "entity_name": "authenticate"}),
         SearchResult(chunk_id="c2", text="class AuthMiddleware:\n    pass",
-            score=0.82, metadata={"file_path": "src/middleware.py", "line_range": [1, 5], "entity_name": "AuthMiddleware"}),
+            score=0.82, metadata={"file_path": "src/middleware.py", "line_range": "1-5", "entity_name": "AuthMiddleware"}),
     ]
     output = format_search_results(results)
     assert "src/auth.py" in output
     assert "authenticate" in output
     assert "src/middleware.py" in output
     assert "AuthMiddleware" in output
+
+
+def test_format_search_results_renders_full_line_range():
+    """Regression: line_range was indexed as a pair, so "239-288" rendered "2-3"."""
+    results = [
+        SearchResult(chunk_id="c1", text="Private Sub Foo()\nEnd Sub", score=0.9,
+            metadata={"file_path": "MainForm.vb", "line_range": "239-288",
+                      "entity_name": "Foo", "language": "vb"}),
+    ]
+    output = format_search_results(results)
+    assert "MainForm.vb:239-288" in output
+    assert "MainForm.vb:2-3" not in output
 
 
 def test_format_search_results_empty():

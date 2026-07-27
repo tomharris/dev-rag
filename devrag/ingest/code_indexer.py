@@ -18,6 +18,10 @@ logger = logging.getLogger(__name__)
 
 CHARS_PER_TOKEN = 4
 
+# Files above this size are skipped: generated typed-DataSets, minified bundles
+# and vendored blobs cost real parse time and yield one truncated chunk.
+MAX_FILE_BYTES = 2_000_000
+
 # ---------------------------------------------------------------------------
 # Language configuration
 # ---------------------------------------------------------------------------
@@ -36,7 +40,8 @@ LANGUAGE_EXTENSIONS: dict[str, str] = {
     ".cc": "cpp",
     ".cxx": "cpp",
     ".hpp": "cpp",
-    ".cs": "c_sharp",
+    ".cs": "csharp",
+    ".vb": "vb",
     ".java": "java",
     ".rb": "ruby",
     ".php": "php",
@@ -61,10 +66,16 @@ LANGUAGE_EXTENSIONS: dict[str, str] = {
     ".json": "json",
     ".tf": "terraform",
     ".tfvars": "terraform",
+    # web.config / app.config. The `xml` grammar exposes no node with a `name`
+    # field, so these can only ever produce a whole-file chunk.
+    ".config": "xml",
 }
 
 # Node types that represent named entities we want to extract per language.
-# Values are tuples of (node_type, is_function_like).
+# A language absent from this map falls back to a single truncated whole-file
+# chunk, so adding a LANGUAGE_EXTENSIONS entry without one here is half a feature.
+# The line drawn is: declares a member with a signature or body = entity;
+# binds a value (field, const, enum member) = not an entity.
 ENTITY_NODE_TYPES: dict[str, list[str]] = {
     "python": [
         "function_definition",
@@ -116,7 +127,39 @@ ENTITY_NODE_TYPES: dict[str, list[str]] = {
     "terraform": [
         "block",
     ],
+    # Namespaces are deliberately absent for VB/C#: a namespace is not a
+    # container we descend into, so matching it would collapse a whole file to
+    # one truncated namespace chunk and lose every class and method in it.
+    "vb": [
+        "class_block",
+        "module_block",
+        "structure_block",
+        "interface_block",
+        "enum_block",
+        "method_declaration",
+        "property_declaration",
+        "event_declaration",
+    ],
+    "csharp": [
+        "class_declaration",
+        "struct_declaration",
+        "record_declaration",
+        "interface_declaration",
+        "enum_declaration",
+        "method_declaration",
+        "constructor_declaration",
+        "property_declaration",
+    ],
 }
+
+# Entity nodes we still descend into, because their members are separate
+# entities (methods in a class/module/struct/interface). Nodes matching
+# `"class" in node.type` qualify implicitly.
+_CONTAINER_NODE_TYPES = frozenset({
+    "impl_item", "trait_item", "type_declaration",  # Rust / Go
+    "module_block", "structure_block", "interface_block",  # VB
+    "struct_declaration", "interface_declaration", "record_declaration",  # C#
+})
 
 
 # ---------------------------------------------------------------------------
@@ -225,6 +268,11 @@ def _find_parent_class(node: Node, language: str) -> str | None:
         "tsx": {"class_declaration", "class_expression"},
         "rust": {"impl_item", "trait_item"},
         "go": set(),
+        "vb": {"class_block", "module_block", "structure_block", "interface_block"},
+        "csharp": {
+            "class_declaration", "struct_declaration",
+            "record_declaration", "interface_declaration",
+        },
     }
     enclosing = class_types.get(language, set())
     parent = node.parent
@@ -260,44 +308,36 @@ def _collect_entity_nodes(
     target_types: list[str],
     language: str,
 ) -> list[Node]:
-    """BFS/DFS walk collecting nodes whose type is in *target_types*.
+    """Iterative walk collecting nodes whose type is in *target_types*.
 
     We stop descending into entity nodes to avoid double-collecting nested
     entities (e.g. methods inside a class) — EXCEPT we *do* descend into
-    class bodies so that methods are included.
+    class-like containers so that their members are included.
+
+    Iterative rather than recursive on purpose: the walk only stops at matched
+    entity nodes, so a deep expression outside one (a field initializer, or
+    anything inside an ERROR node — ~90% of real VB.NET files have them) is
+    walked to the bottom. Real VB files reach AST depths over 1000 via long `&`
+    concatenation chains, which overflows Python's recursion limit.
     """
     results: list[Node] = []
-    class_body_types = {
-        "block",           # Python
-        "class_body",      # JS/TS
-        "declaration_list",  # Rust impl
-        "field_declaration_list",  # Rust struct
-    }
-
-    def walk(node: Node, inside_class: bool) -> None:
+    # Children are pushed reversed so siblings pop in document order.
+    stack: list[Node] = [root]
+    while stack:
+        node = stack.pop()
         # Treat export_statement as transparent wrapper — descend into
         # children so the real declaration is collected, not the wrapper.
         if node.type == "export_statement":
-            for child in node.children:
-                walk(child, inside_class=False)
-            return
-        if node.type in target_types:
-            name = _get_entity_name(node, language)
-            if name:
-                results.append(node)
-                # Descend into children only for class-like nodes
-                is_class = "class" in node.type or node.type in (
-                    "impl_item", "trait_item", "type_declaration"
-                )
-                if is_class:
-                    for child in node.children:
-                        walk(child, inside_class=True)
-                return  # don't double-count children of functions
-        # Descend normally
-        for child in node.children:
-            walk(child, inside_class)
-
-    walk(root, inside_class=False)
+            stack.extend(reversed(node.children))
+            continue
+        if node.type in target_types and _get_entity_name(node, language):
+            results.append(node)
+            # Descend into children only for class-like containers, so we don't
+            # double-count the innards of functions.
+            if "class" in node.type or node.type in _CONTAINER_NODE_TYPES:
+                stack.extend(reversed(node.children))
+            continue
+        stack.extend(reversed(node.children))
     return results
 
 
@@ -309,10 +349,12 @@ def extract_chunks_from_file(
     file_path: Path,
     max_tokens: int = 512,
     repo_name: str = "",
+    max_file_bytes: int = MAX_FILE_BYTES,
 ) -> list[Chunk]:
     """Parse *file_path* with tree-sitter and return a list of Chunks.
 
-    Returns an empty list for unsupported file types or parse errors.
+    Returns an empty list for unsupported file types, parse errors, or files
+    larger than *max_file_bytes* (0 disables the cap).
     """
     suffix = file_path.suffix.lower()
     # Keep original suffix for lookup (e.g. .R vs .r)
@@ -327,10 +369,27 @@ def extract_chunks_from_file(
         return []
 
     try:
+        # stat() before read_bytes() so a multi-megabyte generated file is
+        # never loaded into memory just to be discarded.
+        if max_file_bytes:
+            size = file_path.stat().st_size
+            if size > max_file_bytes:
+                logger.info(
+                    "Skipping %s: %d bytes exceeds max_file_bytes=%d",
+                    file_path, size, max_file_bytes,
+                )
+                return []
         source = file_path.read_bytes()
     except OSError as exc:
         logger.warning("Cannot read %s: %s", file_path, exc)
         return []
+
+    # Strip a UTF-8 BOM before parsing: .NET source is routinely BOM'd and the
+    # U+FEFF otherwise leads the first chunk's text and its signature line.
+    # Only column numbers shift, not line numbers, and _hash_file reads the
+    # raw bytes independently.
+    if source.startswith(b"\xef\xbb\xbf"):
+        source = source[3:]
 
     try:
         tree = parser.parse(source)
@@ -442,6 +501,14 @@ _DEFAULT_EXCLUDE = [
     "__pycache__/**",
     "*.pyc",
     ".git/**",
+    # .NET / Visual Studio generated code. The `**/` prefix is required:
+    # gitignore semantics root-anchor any pattern with an internal slash, so
+    # "My Project/**" would miss every nested occurrence.
+    "*.Designer.vb",
+    "*.Designer.cs",
+    "**/My Project/**",
+    "**/Web References/**",
+    "**/Crystal Reports Backup Files/**",
 ]
 
 _COLLECTION = "code_chunks"
@@ -529,6 +596,7 @@ class CodeIndexer:
                     file_path,
                     max_tokens=self._config.chunk_max_tokens,
                     repo_name=repo_name,
+                    max_file_bytes=self._config.max_file_bytes,
                 )
                 if not chunks:
                     stats.files_empty += 1
