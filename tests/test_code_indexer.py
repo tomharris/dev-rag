@@ -1,11 +1,14 @@
 import hashlib
+import os
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+from devrag.config import CodeConfig
 from devrag.ingest import code_indexer as code_indexer_mod
 from devrag.ingest.code_indexer import (
+    ENTITY_NODE_TYPES,
     LANGUAGE_EXTENSIONS,
     CodeIndexer,
     extract_chunks_from_file,
@@ -50,6 +53,20 @@ def test_language_extensions_mapping():
     assert LANGUAGE_EXTENSIONS[".go"] == "go"
     assert LANGUAGE_EXTENSIONS[".tf"] == "terraform"
     assert LANGUAGE_EXTENSIONS[".tfvars"] == "terraform"
+    assert LANGUAGE_EXTENSIONS[".vb"] == "vb"
+    assert LANGUAGE_EXTENSIONS[".cs"] == "csharp"
+    assert LANGUAGE_EXTENSIONS[".config"] == "xml"
+
+
+def test_entity_node_types_keys_are_mapped_languages():
+    """Every ENTITY_NODE_TYPES key must be a grammar name some extension maps to.
+
+    A key that no extension maps to is dead config: the language silently falls
+    back to a single truncated whole-file chunk. This is exactly how `.cs` lost
+    its AST chunking (mapped to "c_sharp", keyed as something else).
+    """
+    unreachable = set(ENTITY_NODE_TYPES) - set(LANGUAGE_EXTENSIONS.values())
+    assert not unreachable, f"ENTITY_NODE_TYPES keys no extension maps to: {unreachable}"
 
 
 def test_extract_chunks_from_terraform_file(tmp_dir):
@@ -86,6 +103,195 @@ def test_extract_chunks_from_terraform_file(tmp_dir):
     # Body is preserved in the chunk text
     resource_chunk = next(c for c in chunks if c.metadata["entity_name"] == "resource.aws_s3_bucket.foo")
     assert "my-bucket" in resource_chunk.text
+
+
+VB_SOURCE = '''Imports System.Windows.Forms
+
+Namespace Trax.Payroll
+    Public Class PayrollForm
+        Inherits System.Windows.Forms.Form
+
+        Private Const MaxRows As Integer = 50
+        Private _total As Decimal
+
+        Public Event Recalculated(ByVal amount As Decimal)
+
+#Region "Properties"
+        Public Property Total() As Decimal
+            Get
+                Return _total
+            End Get
+            Set(ByVal value As Decimal)
+                _total = value
+            End Set
+        End Property
+#End Region
+
+        Private Sub btnCalc_Click(ByVal sender As Object, ByVal e As EventArgs) Handles btnCalc.Click
+            RecalcTotals()
+        End Sub
+
+        Public Sub RecalcTotals()
+            With Me.grid
+                .Refresh()
+            End With
+        End Sub
+    End Class
+
+    Public Module PayrollHelpers
+        Public Function FormatCurrency(ByVal v As Decimal) As String
+            Return v.ToString("C")
+        End Function
+    End Module
+End Namespace
+'''
+
+
+def test_extract_chunks_from_vb_file(tmp_dir):
+    """VB.NET entities survive the `vb` grammar's parse failures.
+
+    The grammar cannot parse ``#Region``, ``Inherits``, ``Handles`` or ``With`` —
+    this fixture has all four, so ``root_node.has_error`` is True. We rely on
+    tree-sitter's error recovery to still yield correctly named entities.
+    Written with a BOM (``utf-8-sig``) because .NET source routinely carries one.
+    """
+    p = tmp_dir / "PayrollForm.vb"
+    p.write_text(VB_SOURCE, encoding="utf-8-sig")
+    chunks = extract_chunks_from_file(p, max_tokens=512)
+    names = [c.metadata["entity_name"] for c in chunks]
+
+    for expected in (
+        "PayrollForm", "Total", "btnCalc_Click", "RecalcTotals",
+        "Recalculated", "PayrollHelpers", "FormatCurrency",
+    ):
+        assert expected in names, f"{expected} missing from {names}"
+
+    for c in chunks:
+        assert c.metadata["language"] == "vb"
+        # Falling through to a whole-file chunk would mean AST chunking failed.
+        assert c.metadata["entity_type"] != "file"
+
+    by_name = {c.metadata["entity_name"]: c for c in chunks}
+    assert by_name["btnCalc_Click"].metadata["parent_entity"] == "PayrollForm"
+    assert by_name["RecalcTotals"].metadata["parent_entity"] == "PayrollForm"
+    # A Module is a container: its members must not be swallowed into it.
+    assert by_name["FormatCurrency"].metadata["parent_entity"] == "PayrollHelpers"
+
+    # Consts and fields bind values; they are not entities.
+    assert "MaxRows" not in names
+    assert "_total" not in names
+
+    # The BOM must not leak into chunk text or the signature line.
+    for c in chunks:
+        assert "﻿" not in c.text
+        assert "﻿" not in c.metadata["signature"]
+    assert by_name["PayrollForm"].metadata["signature"] == "Public Class PayrollForm"
+
+
+CSHARP_SOURCE = '''using System;
+
+namespace Trax.Util
+{
+    public class StringUtils
+    {
+        private const int MaxLen = 255;
+        private string _name;
+
+        public StringUtils(string name)
+        {
+            _name = name;
+        }
+
+        public string Name { get; set; }
+
+        public string Other
+        {
+            get { return _name; }
+        }
+
+        public static string Trim(string input)
+        {
+            return input == null ? null : input.Trim();
+        }
+    }
+
+    public interface IThing
+    {
+        void Do(int n);
+    }
+
+    public struct Point
+    {
+        public int X;
+        public void Move(int dx) { X += dx; }
+    }
+
+    public enum Color { Red, Green }
+}
+'''
+
+
+def test_extract_chunks_from_csharp_file(tmp_dir):
+    """C# gets real AST chunking, not one truncated whole-file chunk.
+
+    Regression test: `.cs` used to map to a grammar name with no
+    ENTITY_NODE_TYPES entry, so every file collapsed to a single `file` chunk.
+    """
+    p = tmp_dir / "StringUtils.cs"
+    p.write_text(CSHARP_SOURCE, encoding="utf-8-sig")
+    chunks = extract_chunks_from_file(p, max_tokens=512)
+    names = [c.metadata["entity_name"] for c in chunks]
+
+    for expected in (
+        "StringUtils", "Name", "Other", "Trim", "IThing", "Do", "Point", "Move", "Color",
+    ):
+        assert expected in names, f"{expected} missing from {names}"
+
+    for c in chunks:
+        assert c.metadata["language"] == "csharp"
+        assert c.metadata["entity_type"] != "file"
+
+    # Interfaces and structs are containers too.
+    by_name = {c.metadata["entity_name"]: c for c in chunks}
+    assert by_name["Do"].metadata["parent_entity"] == "IThing"
+    assert by_name["Move"].metadata["parent_entity"] == "Point"
+
+    # Consts, fields and enum members are not entities.
+    for absent in ("MaxLen", "_name", "Red", "Green", "X"):
+        assert absent not in names
+
+    assert "﻿" not in by_name["StringUtils"].metadata["signature"]
+
+
+def test_extract_chunks_survives_deeply_nested_expressions(tmp_dir):
+    """Deep ASTs must not overflow the entity walker.
+
+    Real VB.NET files reach AST depths over 1000 via long `&` concatenation
+    chains building SQL/HTML (measured: 1036 in trax-apps' PayrollPendingCtl.vb).
+    The walker only stops descending at matched entity nodes, so a deep
+    expression that sits outside one — in a field initializer here, inside an
+    ERROR node in the real file — is walked to the bottom. A recursive walker
+    raises RecursionError and the file is lost on every run.
+    """
+    chain = " & ".join(f'"p{i}"' for i in range(2000))
+    p = tmp_dir / "Deep.vb"
+    p.write_text(
+        "Public Class Big\n"
+        "    Inherits Form\n"
+        f"    Private s As String = {chain}\n"
+        "End Class\n"
+    )
+    chunks = extract_chunks_from_file(p, max_tokens=512)
+    names = [c.metadata["entity_name"] for c in chunks]
+    assert "Big" in names
+
+
+def test_extract_chunks_skips_oversized_file(tmp_dir):
+    """Files over max_file_bytes are skipped; 0 disables the cap."""
+    p = tmp_dir / "huge.py"
+    p.write_text("def f():\n    return 1\n" + ("# pad\n" * 20_000))
+    assert extract_chunks_from_file(p, max_tokens=512, max_file_bytes=1000) == []
+    assert extract_chunks_from_file(p, max_tokens=512, max_file_bytes=0) != []
 
 
 def test_chunk_ids_are_deterministic(sample_python_file):
@@ -276,6 +482,43 @@ def test_code_indexer_skips_empty_file(tmp_dir, indexer_deps):
     stats = indexer.index_repo(repo)
     assert stats.files_indexed >= 1
     assert stats.chunks_created >= 1
+
+
+def test_code_indexer_skips_oversized_file(tmp_dir, indexer_deps):
+    """An oversized file is counted in files_empty, not files_failed."""
+    store, meta, embedder, sparse_encoder = indexer_deps
+    repo = tmp_dir / "repo"
+    repo.mkdir()
+    import subprocess
+    subprocess.run(["git", "init", str(repo)], capture_output=True, check=True)
+    subprocess.run(["git", "config", "user.email", "t@t.com"], cwd=str(repo), capture_output=True)
+    subprocess.run(["git", "config", "user.name", "T"], cwd=str(repo), capture_output=True)
+    (repo / "huge.py").write_text("def big():\n    return 1\n" + ("# pad\n" * 20_000))
+    (repo / "real.py").write_text("def hello():\n    return 'world'\n")
+    subprocess.run(["git", "add", "."], cwd=str(repo), capture_output=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=str(repo), capture_output=True)
+
+    config = CodeConfig(max_file_bytes=1000)
+    indexer = CodeIndexer(store, meta, embedder, sparse_encoder, config=config)
+    stats = indexer.index_repo(repo)
+    assert stats.files_empty == 1
+    assert stats.files_failed == 0
+    assert stats.files_indexed == 1
+
+
+@pytest.mark.skipif(
+    os.environ.get("SKIP_INTEGRATION", "1") == "1",
+    reason="Set SKIP_INTEGRATION=0 to run; downloads tree-sitter grammars on a cold cache",
+)
+def test_every_language_extension_resolves():
+    """Every grammar name in LANGUAGE_EXTENSIONS must actually load.
+
+    A typo'd name is caught by _get_parser's bare except, logged only at INFO,
+    and the extension silently indexes nothing.
+    """
+    import tree_sitter_language_pack as tslp
+    for lang in sorted(set(LANGUAGE_EXTENSIONS.values())):
+        assert tslp.get_language(lang) is not None, lang
 
 
 def test_code_indexer_multi_repo_no_cross_deletion(tmp_dir, indexer_deps):

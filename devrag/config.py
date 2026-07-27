@@ -49,6 +49,7 @@ class RetrievalConfig:
 @dataclass
 class CodeConfig:
     chunk_max_tokens: int = 512
+    max_file_bytes: int = 2_000_000  # skip larger files (generated DataSets, bundles); 0 = no cap
     respect_gitignore: bool = True
     index_docs: bool = True  # also index repo docs (md/txt/rst/…) into `documents` on `index repo`
     exclude_patterns: list[str] = field(default_factory=lambda: [
