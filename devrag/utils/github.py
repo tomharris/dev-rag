@@ -3,9 +3,47 @@ import re
 import time
 import httpx
 
-from devrag.utils.http import resolve_verify
+from devrag.utils.http import (
+    MAX_BACKOFF_SECONDS,
+    backoff_delay,
+    parse_retry_after,
+    request_with_retries,
+    resolve_verify,
+    safe_int,
+)
 
 API_BASE = "https://api.github.com"
+
+
+def _rate_limit_retry_delay(resp: httpx.Response, attempt: int) -> float | None:
+    """Seconds to wait before retrying, or ``None`` to accept the response.
+
+    GitHub signals throttling in three different shapes, and only handling one
+    of them is what let long syncs die mid-run:
+
+    * **Primary limit** — ``403`` with ``x-ratelimit-remaining: 0``; the quota
+      refills at ``x-ratelimit-reset`` (a Unix timestamp).
+    * **Secondary limit** — ``429`` (abuse detection) with ``Retry-After`` set
+      and ``x-ratelimit-remaining`` *non-zero or absent*, so a
+      ``remaining == 0`` test never fires for it.
+    * **Server errors** — ordinary ``5xx``, retried with plain backoff.
+
+    A ``403`` with quota still remaining is an authorization failure, not
+    throttling, so it is returned as-is rather than retried — surfacing "token
+    lacks this scope" immediately instead of stalling on it.
+    """
+    if resp.status_code >= 500:
+        return backoff_delay(attempt, resp.headers.get("Retry-After"))
+    if resp.status_code not in (403, 429):
+        return None
+    retry_after = parse_retry_after(resp.headers.get("Retry-After"))
+    if retry_after is not None:
+        return min(retry_after, MAX_BACKOFF_SECONDS)
+    if safe_int(resp.headers.get("x-ratelimit-remaining"), 1) == 0:
+        reset_at = safe_int(resp.headers.get("x-ratelimit-reset"), 0)
+        # +1s of slack so we wake *after* the window rolls over, not on its edge.
+        return min(max(reset_at - time.time(), 0) + 1, MAX_BACKOFF_SECONDS)
+    return None
 
 
 def parse_diff_hunks(patch: str, file_path: str) -> list[dict]:
@@ -34,7 +72,8 @@ def _get_next_url(response: httpx.Response) -> str | None:
 
 
 class GitHubClient:
-    def __init__(self, token: str | None = None, verify: str | bool | None = None) -> None:
+    def __init__(self, token: str | None = None, verify: str | bool | None = None,
+                 max_retries: int = 5) -> None:
         self._headers: dict[str, str] = {
             "Accept": "application/vnd.github+json",
             "X-GitHub-Api-Version": "2022-11-28",
@@ -43,18 +82,17 @@ class GitHubClient:
             self._headers["Authorization"] = f"Bearer {token}"
         if verify is None:
             verify = resolve_verify()
+        self._max_retries = max(max_retries, 0)
         self._client = httpx.Client(headers=self._headers, timeout=30.0, verify=verify)
 
     def _request(self, method: str, url: str, **kwargs) -> httpx.Response:
-        resp = self._client.request(method, url, **kwargs)
-        if resp.status_code in (403, 429):
-            remaining = int(resp.headers.get("x-ratelimit-remaining", "1"))
-            if remaining == 0:
-                reset_at = int(resp.headers.get("x-ratelimit-reset", "0"))
-                retry_after = int(resp.headers.get("retry-after", "0"))
-                wait = retry_after if retry_after else max(reset_at - time.time(), 0) + 1
-                time.sleep(min(wait, 60))
-                resp = self._client.request(method, url, **kwargs)
+        """Issue a request, waiting out rate limits and retrying transient
+        failures up to ``max_retries`` times (see ``_rate_limit_retry_delay``)."""
+        resp = request_with_retries(
+            lambda: self._client.request(method, url, **kwargs),
+            max_retries=self._max_retries,
+            retry_delay=_rate_limit_retry_delay,
+        )
         resp.raise_for_status()
         return resp
 

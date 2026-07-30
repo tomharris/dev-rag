@@ -1,12 +1,10 @@
 from __future__ import annotations
 
-import random
-import time
 from collections.abc import Iterator
 
 import httpx
 
-from devrag.utils.http import resolve_verify
+from devrag.utils.http import request_with_retries, resolve_verify
 
 
 class SliteClient:
@@ -25,35 +23,13 @@ class SliteClient:
             verify=verify,
         )
 
-    @staticmethod
-    def _backoff(attempt: int, retry_after: str | None = None) -> float:
-        """Seconds to wait before the next attempt: honor ``Retry-After`` when
-        present, else exponential backoff with jitter, capped at 60s."""
-        if retry_after is not None:
-            try:
-                return min(float(retry_after), 60.0)
-            except ValueError:
-                pass
-        return min(2.0 ** attempt, 60.0) + random.uniform(0, 0.5)
-
     def _request(self, method: str, url: str, **kwargs) -> httpx.Response:
-        """Issue a request, retrying transient failures (429/5xx/timeout) with
+        """Issue a request, retrying transient failures (429/5xx/transport) with
         ``Retry-After``-aware exponential backoff up to ``max_retries`` times."""
-        for attempt in range(self._max_retries + 1):
-            last = attempt == self._max_retries
-            try:
-                resp = self._client.request(method, url, **kwargs)
-            except httpx.TimeoutException:
-                if last:
-                    raise
-                time.sleep(self._backoff(attempt))
-                continue
-            if resp.status_code == 429 or resp.status_code >= 500:
-                if last:
-                    resp.raise_for_status()
-                time.sleep(self._backoff(attempt, resp.headers.get("Retry-After")))
-                continue
-            break
+        resp = request_with_retries(
+            lambda: self._client.request(method, url, **kwargs),
+            max_retries=self._max_retries,
+        )
         resp.raise_for_status()
         return resp
 

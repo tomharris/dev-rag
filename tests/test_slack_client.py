@@ -159,3 +159,74 @@ def test_cookie_and_token_sent():
     request = route.calls.last.request
     assert "d=xoxd-xyz" in request.headers.get("cookie", "")
     assert b"token=xoxc-abc" in request.content
+
+
+@respx.mock
+def test_connect_error_retries_then_succeeds(monkeypatch):
+    # ConnectError is a sibling of TimeoutException under TransportError, so a
+    # timeout-only except clause let DNS/refused-connection faults abort a sync.
+    monkeypatch.setattr("devrag.utils.http.time.sleep", lambda _: None)
+    calls = {"n": 0}
+
+    def handler(request):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise httpx.ConnectError("connection refused")
+        return httpx.Response(200, json={
+            "ok": True, "channels": [{"id": "C1"}], "response_metadata": {"next_cursor": ""},
+        })
+
+    respx.post(f"{API}/conversations.list").mock(side_effect=handler)
+    client = SlackClient(token="xoxc-test", cookie="xoxd-test", max_retries=3)
+    assert [c["id"] for c in client.list_conversations()] == ["C1"]
+    assert calls["n"] == 2
+
+
+@respx.mock
+def test_read_error_retries_then_succeeds(monkeypatch):
+    monkeypatch.setattr("devrag.utils.http.time.sleep", lambda _: None)
+    calls = {"n": 0}
+
+    def handler(request):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise httpx.ReadError("connection reset by peer")
+        return httpx.Response(200, json={"ok": True, "user": "u"})
+
+    respx.post(f"{API}/auth.test").mock(side_effect=handler)
+    client = SlackClient(token="xoxc-test", cookie="xoxd-test", max_retries=3)
+    assert client.auth_test()["user"] == "u"
+    assert calls["n"] == 2
+
+
+@respx.mock
+def test_connect_error_reraises_after_exhausting_retries(monkeypatch):
+    monkeypatch.setattr("devrag.utils.http.time.sleep", lambda _: None)
+    route = respx.post(f"{API}/auth.test").mock(
+        side_effect=httpx.ConnectError("connection refused")
+    )
+    client = SlackClient(token="xoxc-test", cookie="xoxd-test", max_retries=2)
+    with pytest.raises(httpx.ConnectError):
+        client.auth_test()
+    assert route.call_count == 3  # max_retries + 1 attempts
+
+
+@respx.mock
+def test_throttle_applies_to_retries(monkeypatch):
+    # Retries must stay inside the global rate cap, or a 429 storm is answered
+    # with an unthrottled burst.
+    monkeypatch.setattr("devrag.utils.http.time.sleep", lambda _: None)
+    ticks = {"n": 0}
+    calls = {"n": 0}
+
+    def handler(request):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return httpx.Response(429, headers={"Retry-After": "0"}, json={"ok": False})
+        return httpx.Response(200, json={"ok": True, "user": "u"})
+
+    respx.post(f"{API}/auth.test").mock(side_effect=handler)
+    client = SlackClient(token="xoxc-test", cookie="xoxd-test", max_retries=3)
+    monkeypatch.setattr(client, "_throttle", lambda: ticks.__setitem__("n", ticks["n"] + 1))
+    client.auth_test()
+    assert ticks["n"] == calls["n"] == 2

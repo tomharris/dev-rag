@@ -1,12 +1,11 @@
 from __future__ import annotations
 
 import base64
-import time
 from collections.abc import Iterator
 
 import httpx
 
-from devrag.utils.http import resolve_verify
+from devrag.utils.http import request_with_retries, resolve_verify
 
 _BLOCK_TYPES = frozenset({
     "paragraph", "heading", "blockquote", "codeBlock",
@@ -18,10 +17,11 @@ _BLOCK_TYPES = frozenset({
 
 class JiraClient:
     def __init__(self, instance_url: str, email: str, api_token: str,
-                 verify: str | bool | None = None) -> None:
+                 verify: str | bool | None = None, max_retries: int = 5) -> None:
         credentials = base64.b64encode(f"{email}:{api_token}".encode()).decode()
         if verify is None:
             verify = resolve_verify()
+        self._max_retries = max(max_retries, 0)
         self._client = httpx.Client(
             base_url=f"{instance_url.rstrip('/')}/rest/api/3/",
             headers={
@@ -34,11 +34,12 @@ class JiraClient:
         )
 
     def _request(self, method: str, url: str, **kwargs) -> httpx.Response:
-        resp = self._client.request(method, url, **kwargs)
-        if resp.status_code == 429:
-            retry_after = int(resp.headers.get("Retry-After", "5"))
-            time.sleep(min(retry_after, 60))
-            resp = self._client.request(method, url, **kwargs)
+        """Issue a request, retrying transient failures (429/5xx/transport) with
+        ``Retry-After``-aware exponential backoff up to ``max_retries`` times."""
+        resp = request_with_retries(
+            lambda: self._client.request(method, url, **kwargs),
+            max_retries=self._max_retries,
+        )
         resp.raise_for_status()
         return resp
 

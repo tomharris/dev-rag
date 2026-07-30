@@ -127,3 +127,26 @@ def test_embed_error_logs_response_body():
     embedder = OllamaEmbedder(model="nomic-embed-text", ollama_url="http://localhost:11434")
     with pytest.raises(httpx.HTTPStatusError):
         embedder.embed(["valid text"])
+
+
+def test_embed_query_rejects_empty_text():
+    # embed() returns [] when every input is blank, so the [0] subscript used to
+    # raise a bare IndexError with no hint about the cause.
+    embedder = OllamaEmbedder(model="nomic-embed-text", ollama_url="http://localhost:11434")
+    with pytest.raises(ValueError, match="non-empty"):
+        embedder.embed_query("")
+
+
+def test_embed_query_rejects_whitespace_only_text():
+    embedder = OllamaEmbedder(model="nomic-embed-text", ollama_url="http://localhost:11434")
+    with pytest.raises(ValueError, match="non-empty"):
+        embedder.embed_query("   \n\t ")
+
+
+@respx.mock
+def test_embed_query_rejects_blank_without_calling_ollama():
+    route = respx.post("http://localhost:11434/api/embed").respond(json={"embeddings": [[0.1]]})
+    embedder = OllamaEmbedder(model="nomic-embed-text", ollama_url="http://localhost:11434")
+    with pytest.raises(ValueError):
+        embedder.embed_query("  ")
+    assert route.call_count == 0  # rejected before any network round-trip

@@ -104,7 +104,7 @@ class SliteConfig:
     backfill_days: int = 90
     chunk_max_tokens: int = 512
     chunk_overlap_tokens: int = 50
-    max_retries: int = 5           # 429/5xx/timeout retries (Retry-After-aware backoff)
+    max_retries: int = 5           # 429/5xx/transport-error retries (Retry-After-aware backoff)
 
 
 @dataclass
@@ -119,7 +119,7 @@ class SlackConfig:
     chunk_overlap_tokens: int = 50
     max_reply_workers: int = 2     # concurrent conversations.replies fetches per channel
     requests_per_minute: int = 60  # global pace cap on Slack web-API calls; 0 = unthrottled
-    max_retries: int = 5           # 429/5xx/timeout retries (Retry-After-aware backoff)
+    max_retries: int = 5           # 429/5xx/transport-error retries (Retry-After-aware backoff)
 
 
 @dataclass
