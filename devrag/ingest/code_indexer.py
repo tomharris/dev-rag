@@ -22,6 +22,28 @@ CHARS_PER_TOKEN = 4
 # and vendored blobs cost real parse time and yield one truncated chunk.
 MAX_FILE_BYTES = 2_000_000
 
+# A declaration's doc comment is trimmed to this many lines (from the front,
+# keeping the lines nearest the declaration), and may claim at most this share
+# of the chunk's char budget so it can never truncate away the code it documents.
+DOC_COMMENT_MAX_LINES = 30
+DOC_COMMENT_BUDGET_RATIO = 0.25
+
+# A file header shorter than this is boilerplate (a shebang, `# tmp`), not
+# documentation, and would only add a near-empty chunk per file.
+FILE_HEADER_MIN_CHARS = 40
+
+# Phrases that only appear in a license *grant*, not in prose that happens to
+# name a license. Vendored files carry near-identical full license texts, so
+# without this every one of them contributes a duplicate header chunk.
+_LICENSE_HEADER_MARKERS = (
+    "permission is hereby granted",
+    "redistribution and use in source and binary",
+    "licensed under the apache license",
+    "gnu general public license",
+    "without warranties or conditions of any kind",
+    "spdx-license-identifier",
+)
+
 # ---------------------------------------------------------------------------
 # Language configuration
 # ---------------------------------------------------------------------------
@@ -161,6 +183,14 @@ _CONTAINER_NODE_TYPES = frozenset({
     "struct_declaration", "interface_declaration", "record_declaration",  # C#
 })
 
+# Wrappers that are never an entity in their own right: we descend through them
+# in `_collect_entity_nodes` to reach the real declaration, and rise back
+# through them in `_hoist_to_doc_anchor` to find that declaration's doc comment.
+# Shared so the two directions cannot drift — `export_statement` is listed in
+# ENTITY_NODE_TYPES for javascript *and* yields a truthy `_get_entity_name`, so
+# neither side can infer its transparency from the tables alone.
+_TRANSPARENT_WRAPPER_NODE_TYPES = frozenset({"export_statement"})
+
 
 # ---------------------------------------------------------------------------
 # Parser cache
@@ -294,6 +324,103 @@ def _get_signature(node: Node, source_bytes: bytes) -> str:
     return text.split("\n")[0].strip()
 
 
+def _is_comment_node(node_type: str) -> bool:
+    """True for any grammar's comment node.
+
+    Probed across every grammar in LANGUAGE_EXTENSIONS, this covers `comment`,
+    `line_comment`, `block_comment`, `doc_comment` and `multiline_comment` while
+    excluding `comment_content` (a *child* of Lua's `comment`) and
+    `outer_doc_comment_marker` (a child of Rust's `doc_comment`). Deliberately a
+    rule rather than a fifth per-language dict to maintain.
+    """
+    return node_type == "comment" or node_type.endswith("_comment")
+
+
+def _hoist_to_doc_anchor(node: Node, target_types: list[str], language: str) -> Node:
+    """Rise to the outermost wrapper that shares *node*'s end, for doc lookup.
+
+    A doc comment precedes the whole declaration, which may be wrapped: Python's
+    `decorated_definition` (the comment sits above the `@decorator`), TS/JS
+    `export_statement`, and VB's `type_declaration` around `class_block`. Walking
+    `prev_sibling` from the bare entity node misses the comment in all three.
+
+    The `end_byte` equality test is what keeps this grammar-agnostic: a real
+    wrapper ends exactly where its single child ends, whereas a member's parent
+    (`declaration_list`, `class_body`) extends past it. We stop at any parent
+    that would itself be emitted as its own chunk, so we never steal a
+    container's doc comment for its first member.
+    """
+    current = node
+    while True:
+        parent = current.parent
+        if parent is None or parent.end_byte != current.end_byte:
+            return current
+        if (
+            parent.type not in _TRANSPARENT_WRAPPER_NODE_TYPES
+            and parent.type in target_types
+            and _get_entity_name(parent, language)
+        ):
+            return current
+        current = parent
+
+
+def _leading_doc_comment(
+    node: Node,
+    source: bytes,
+    target_types: list[str],
+    language: str,
+    max_lines: int,
+) -> str | None:
+    """Return the comment block immediately above *node*, or None.
+
+    tree-sitter attaches a preceding comment as an extra *sibling* in the
+    parent, not as a child of the declaration it documents, so it has to be
+    collected explicitly or every "doc comment above the declaration" language
+    (JSDoc, Go, Rust `///`, C#/VB XML docs) loses its prose from the chunk.
+
+    Two traps, both load-bearing:
+
+    * The `vb` grammar emits an explicit `blank_line` node per newline, so the
+      comment is never the immediate `prev_sibling` — whitespace-only siblings
+      must be skipped or VB (where ~90% of files are error-recovered) gets
+      nothing.
+    * The blank-line gap is measured against `anchor_row`, not against the
+      sibling we just skipped. Advancing the cursor over `blank_line` trivia and
+      measuring from there silently defeats the check, which makes an unrelated
+      comment two lines above a declaration look adjacent.
+    """
+    anchor = _hoist_to_doc_anchor(node, target_types, language)
+    anchor_row = anchor.start_point[0]
+    blocks: list[Node] = []
+    current = anchor
+    while True:
+        prev = current.prev_sibling
+        if prev is None:
+            break
+        if not source[prev.start_byte:prev.end_byte].strip():
+            current = prev  # whitespace-only trivia (VB `blank_line`)
+            continue
+        if not _is_comment_node(prev.type):
+            break
+        # A blank line between comment and declaration means it documents
+        # nothing. Measured from the anchor, never from skipped trivia.
+        if anchor_row - prev.end_point[0] > 1:
+            break
+        blocks.append(prev)
+        current = prev
+        anchor_row = prev.start_point[0]
+
+    if not blocks:
+        return None
+    blocks.reverse()
+    # Trim from the front: the lines nearest the declaration describe it.
+    while len(blocks) > 1 and blocks[-1].end_point[0] - blocks[0].start_point[0] + 1 > max_lines:
+        blocks.pop(0)
+    text = source[blocks[0].start_byte:blocks[-1].end_byte].decode("utf-8", errors="replace")
+    # Rust's `doc_comment` span includes its trailing newline.
+    return text.rstrip() or None
+
+
 def _make_chunk_id(file_path: str, entity_name: str, line_start: int, repo: str = "") -> str:
     """Deterministic SHA-256-based chunk ID."""
     if repo:
@@ -327,7 +454,7 @@ def _collect_entity_nodes(
         node = stack.pop()
         # Treat export_statement as transparent wrapper — descend into
         # children so the real declaration is collected, not the wrapper.
-        if node.type == "export_statement":
+        if node.type in _TRANSPARENT_WRAPPER_NODE_TYPES:
             stack.extend(reversed(node.children))
             continue
         if node.type in target_types and _get_entity_name(node, language):
@@ -350,6 +477,9 @@ def extract_chunks_from_file(
     max_tokens: int = 512,
     repo_name: str = "",
     max_file_bytes: int = MAX_FILE_BYTES,
+    include_doc_comments: bool = True,
+    doc_comment_max_lines: int = DOC_COMMENT_MAX_LINES,
+    index_file_headers: bool = True,
 ) -> list[Chunk]:
     """Parse *file_path* with tree-sitter and return a list of Chunks.
 
@@ -410,6 +540,13 @@ def extract_chunks_from_file(
     chunks: list[Chunk] = []
     str_file_path = str(file_path)
 
+    if index_file_headers:
+        header = _file_header_chunk(
+            tree.root_node, file_path, source, language, repo_name, max_tokens
+        )
+        if header is not None:
+            chunks.append(header)
+
     for node in entity_nodes:
         entity_name = _get_entity_name(node, language)
         if not entity_name:
@@ -425,14 +562,27 @@ def extract_chunks_from_file(
         if not raw_text.strip():
             continue
 
+        max_chars = max_tokens * CHARS_PER_TOKEN
+
+        parts: list[str] = []
         # Add class context prefix for methods
         if parent_class:
-            text = f"# In class {parent_class}\n{raw_text}"
-        else:
-            text = raw_text
+            parts.append(f"# In class {parent_class}")
+        if include_doc_comments:
+            doc = _leading_doc_comment(
+                node, source, target_types, language, doc_comment_max_lines
+            )
+            if doc:
+                # Cap the doc's share of the budget so a long comment block can
+                # never truncate the code it documents out of its own chunk.
+                doc_budget = int(max_chars * DOC_COMMENT_BUDGET_RATIO)
+                if len(doc) > doc_budget:
+                    doc = doc[:doc_budget].rstrip() + " …"
+                parts.append(doc)
+        parts.append(raw_text)
+        text = "\n".join(parts)
 
         # Truncate if exceeds max_tokens
-        max_chars = max_tokens * CHARS_PER_TOKEN
         if len(text) > max_chars:
             text = text[:max_chars] + "\n# ... (truncated)"
 
@@ -456,6 +606,77 @@ def extract_chunks_from_file(
         chunks.append(Chunk(id=chunk_id, text=text, metadata=metadata))
 
     return chunks
+
+
+def _file_header_chunk(
+    root: Node,
+    file_path: Path,
+    source: bytes,
+    language: str,
+    repo_name: str,
+    max_tokens: int = 512,
+) -> Chunk | None:
+    """Return a chunk for the file's leading comment block / module docstring.
+
+    Entity chunks only ever cover declarations, so a file's top-level "what is
+    this for" prose belongs to no chunk at all. Collected as one chunk per file
+    rather than prefixed onto every entity, which would duplicate it N times.
+
+    Returns None when the header is only boilerplate (a shebang, an encoding
+    line), which is the common case and not worth a chunk.
+    """
+    blocks: list[Node] = []
+    for child in root.children:
+        text_bytes = source[child.start_byte:child.end_byte]
+        if not text_bytes.strip():
+            continue
+        # A bare leading `string` is Python's module docstring (a direct `module`
+        # child in this grammar, not wrapped in an expression_statement).
+        if _is_comment_node(child.type) or child.type == "string":
+            blocks.append(child)
+            continue
+        break
+
+    if not blocks:
+        return None
+    text = source[blocks[0].start_byte:blocks[-1].end_byte].decode(
+        "utf-8", errors="replace"
+    ).strip()
+    # Strip a shebang / encoding line before judging substance.
+    lines = [
+        ln for ln in text.splitlines()
+        if not ln.startswith("#!") and "coding:" not in ln
+    ]
+    text = "\n".join(lines).strip()
+    if len(text) < FILE_HEADER_MIN_CHARS:
+        return None
+    lowered = text.lower()
+    if any(marker in lowered for marker in _LICENSE_HEADER_MARKERS):
+        return None
+
+    max_chars = max_tokens * CHARS_PER_TOKEN
+    if len(text) > max_chars:
+        text = text[:max_chars] + "\n# ... (truncated)"
+
+    str_file_path = str(file_path)
+    line_start = blocks[0].start_point[0] + 1
+    line_end = blocks[-1].end_point[0] + 1
+    metadata: dict[str, Any] = {
+        "file_path": str_file_path,
+        "language": language,
+        "entity_name": file_path.name,
+        "entity_type": "module_doc",
+        "line_range": f"{line_start}-{line_end}",
+        "line_start": line_start,
+        "line_end": line_end,
+    }
+    if repo_name:
+        metadata["repo"] = repo_name
+    return Chunk(
+        id=_make_chunk_id(str_file_path, "__module_doc__", line_start, repo=repo_name),
+        text=text,
+        metadata=metadata,
+    )
 
 
 def _whole_file_chunk(
@@ -597,6 +818,9 @@ class CodeIndexer:
                     max_tokens=self._config.chunk_max_tokens,
                     repo_name=repo_name,
                     max_file_bytes=self._config.max_file_bytes,
+                    include_doc_comments=self._config.include_doc_comments,
+                    doc_comment_max_lines=self._config.doc_comment_max_lines,
+                    index_file_headers=self._config.index_file_headers,
                 )
                 if not chunks:
                     stats.files_empty += 1

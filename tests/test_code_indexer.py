@@ -623,3 +623,281 @@ def test_code_and_docs_coexist_without_cross_deletion(tmp_dir, indexer_deps):
     doc_stats = docs.index_repo_docs(repo, repo_name="r", incremental=True)
     assert doc_stats.files_removed == 0
     assert meta.get_chunks_for_file(str(repo / "main.py"), repo="r") == main_chunks
+
+
+# --- Leading doc-comment capture ---
+#
+# tree-sitter parses a comment that precedes a declaration as an *extra sibling
+# node in the parent*, not a child of the declaration. Every language whose
+# convention is "doc comment above the declaration" therefore lost its
+# documentation from the entity chunk until _leading_doc_comment was added.
+
+def _one(chunks, name):
+    return next(c for c in chunks if c.metadata["entity_name"] == name)
+
+
+def test_doc_comment_attached_python_through_decorator(tmp_dir):
+    """The comment sits above the *decorator*, so the walk must hoist through
+    `decorated_definition` (which is in ENTITY_NODE_TYPES but yields no name,
+    so `_collect_entity_nodes` emits the inner `function_definition`)."""
+    p = tmp_dir / "m.py"
+    p.write_text(
+        "# Registers the retry handler.\n"
+        "# Second line of the note.\n"
+        "@decorator\n"
+        "def helper(x):\n"
+        "    return x\n"
+    )
+    text = _one(extract_chunks_from_file(p, max_tokens=512), "helper").text
+    assert "Registers the retry handler." in text
+    assert "Second line of the note." in text
+
+
+def test_doc_comment_attached_typescript_jsdoc(tmp_dir):
+    """JSDoc precedes the `export_statement` wrapper, not the function."""
+    p = tmp_dir / "a.ts"
+    p.write_text(
+        "/**\n * Refreshes the OAuth token.\n */\n"
+        "export function refresh(t: string) { return t; }\n"
+    )
+    assert "Refreshes the OAuth token." in _one(
+        extract_chunks_from_file(p, max_tokens=512), "refresh"
+    ).text
+
+
+def test_doc_comment_attached_javascript_export(tmp_dir):
+    """`_get_entity_name(export_statement, "javascript")` returns a truthy name,
+    so export_statement needs explicit transparency during hoisting."""
+    p = tmp_dir / "a.js"
+    p.write_text("/** Serializes the payload. */\nexport function g() {}\n")
+    assert "Serializes the payload." in _one(
+        extract_chunks_from_file(p, max_tokens=512), "g"
+    ).text
+
+
+def test_doc_comment_attached_go(tmp_dir):
+    p = tmp_dir / "m.go"
+    p.write_text("package m\n\n// Foo dials the upstream.\n// Retries twice.\nfunc Foo() {}\n")
+    text = _one(extract_chunks_from_file(p, max_tokens=512), "Foo").text
+    assert "Foo dials the upstream." in text
+    assert "Retries twice." in text
+
+
+def test_doc_comment_attached_rust(tmp_dir):
+    p = tmp_dir / "m.rs"
+    p.write_text("/// Parses the manifest.\npub fn f() {}\n")
+    assert "Parses the manifest." in _one(
+        extract_chunks_from_file(p, max_tokens=512), "f"
+    ).text
+
+
+def test_doc_comment_attached_csharp_class_and_method(tmp_dir):
+    p = tmp_dir / "C.cs"
+    p.write_text(
+        "namespace N {\n"
+        "  /// <summary>Wraps the audit log.</summary>\n"
+        "  public class C {\n"
+        "    /// <summary>Flushes pending writes.</summary>\n"
+        "    [Obsolete]\n"
+        "    public void M() { }\n"
+        "  }\n"
+        "}\n"
+    )
+    chunks = extract_chunks_from_file(p, max_tokens=512)
+    assert "Wraps the audit log." in _one(chunks, "C").text
+    assert "Flushes pending writes." in _one(chunks, "M").text
+
+
+def test_doc_comment_attached_vb_despite_parse_errors(tmp_dir):
+    """VB is the language where this matters most and is hardest: the grammar
+    emits explicit `blank_line` sibling nodes, wraps `class_block` in
+    `type_declaration`, and ~90% of real files carry ERROR nodes."""
+    p = tmp_dir / "C.vb"
+    p.write_text(
+        '#Region "Helpers"\n'
+        "''' <summary>Holds the payroll batch.</summary>\n"
+        "Public Class C\n"
+        "    ''' <summary>Posts the batch to the ledger.</summary>\n"
+        "    Public Sub M()\n"
+        '        Dim x = 1 & "a"\n'
+        "    End Sub\n"
+        "End Class\n"
+        "#End Region\n"
+    )
+    chunks = extract_chunks_from_file(p, max_tokens=512)
+    assert "Holds the payroll batch." in _one(chunks, "C").text
+    assert "Posts the batch to the ledger." in _one(chunks, "M").text
+
+
+def test_non_adjacent_comment_not_attached(tmp_dir):
+    """A comment separated by a blank line documents nothing. Skipping VB's
+    `blank_line` trivia must not defeat the line-gap check — measure the gap
+    against a tracked anchor, not the trivia node."""
+    py = tmp_dir / "gap.py"
+    py.write_text("def first(): pass\n\n# UNRELATED_MARKER\n\ndef second(): pass\n")
+    assert "UNRELATED_MARKER" not in _one(
+        extract_chunks_from_file(py, max_tokens=512), "second"
+    ).text
+
+    vb = tmp_dir / "gap.vb"
+    vb.write_text(
+        "Public Class C\n"
+        "    Public Sub M()\n"
+        "    End Sub\n"
+        "\n"
+        "    ' UNRELATED_MARKER\n"
+        "\n"
+        "    Public Sub N()\n"
+        "    End Sub\n"
+        "End Class\n"
+    )
+    assert "UNRELATED_MARKER" not in _one(
+        extract_chunks_from_file(vb, max_tokens=512), "N"
+    ).text
+
+
+def test_doc_comment_preserves_line_start_and_signature(tmp_dir):
+    """line_start feeds _make_chunk_id, so it must stay the declaration line —
+    shifting it to the comment would orphan every existing chunk."""
+    p = tmp_dir / "s.py"
+    p.write_text("# Doc line one.\n# Doc line two.\ndef helper(x):\n    return x\n")
+    chunk = _one(extract_chunks_from_file(p, max_tokens=512), "helper")
+    assert chunk.metadata["line_start"] == 3
+    assert chunk.metadata["signature"] == "def helper(x):"
+
+
+def test_doc_comments_do_not_change_chunk_ids(tmp_dir):
+    """Chunk IDs must be identical whether or not doc comments are captured."""
+    p = tmp_dir / "id.py"
+    p.write_text("# Doc.\ndef helper(x):\n    return x\n")
+    with_docs = extract_chunks_from_file(p, max_tokens=512, include_doc_comments=True)
+    without = extract_chunks_from_file(p, max_tokens=512, include_doc_comments=False)
+    assert [c.id for c in with_docs] == [c.id for c in without]
+    assert "Doc." in _one(with_docs, "helper").text
+    assert "Doc." not in _one(without, "helper").text
+
+
+def test_doc_comment_truncated_from_front_past_max_lines(tmp_dir):
+    """Keep the lines nearest the declaration — those describe it."""
+    p = tmp_dir / "long.py"
+    p.write_text(
+        "# FIRST_MARKER\n"
+        + "".join(f"# filler {i}\n" for i in range(10))
+        + "# LAST_MARKER\n"
+        "def helper(): pass\n"
+    )
+    text = _one(
+        extract_chunks_from_file(p, max_tokens=512, doc_comment_max_lines=3), "helper"
+    ).text
+    assert "LAST_MARKER" in text
+    assert "FIRST_MARKER" not in text
+
+
+def test_doc_comment_cannot_crowd_out_code(tmp_dir):
+    """A huge comment block above a declaration must not consume the chunk's
+    whole token budget and truncate away the code itself."""
+    p = tmp_dir / "big.py"
+    p.write_text(
+        "".join(f"# pad pad pad pad pad pad pad pad line {i}\n" for i in range(400))
+        + "def helper():\n    return 'BODY_MARKER'\n"
+    )
+    text = _one(
+        extract_chunks_from_file(p, max_tokens=128, doc_comment_max_lines=500), "helper"
+    ).text
+    assert "def helper" in text
+    assert "BODY_MARKER" in text
+
+
+def test_file_header_chunk_captures_module_docstring(tmp_dir):
+    p = tmp_dir / "h.py"
+    p.write_text(
+        '"""This module reconciles the ledger against upstream."""\n'
+        "# Owned by the payments team.\n"
+        "\n"
+        "def helper(): pass\n"
+    )
+    chunks = extract_chunks_from_file(p, max_tokens=512)
+    header = [c for c in chunks if c.metadata["entity_type"] == "module_doc"]
+    assert len(header) == 1
+    assert "reconciles the ledger" in header[0].text
+    assert "Owned by the payments team." in header[0].text
+
+
+def test_file_header_chunk_skips_trivial_headers(tmp_dir):
+    """A shebang or a one-word comment is not documentation."""
+    for name, src in [
+        ("sh.py", "#!/usr/bin/env python\ndef f(): pass\n"),
+        ("short.py", "# tmp\ndef f(): pass\n"),
+        ("none.py", "def f(): pass\n"),
+    ]:
+        p = tmp_dir / name
+        p.write_text(src)
+        chunks = extract_chunks_from_file(p, max_tokens=512)
+        assert not [c for c in chunks if c.metadata["entity_type"] == "module_doc"], name
+
+
+def test_file_header_chunk_disabled_by_flag(tmp_dir):
+    p = tmp_dir / "off.py"
+    p.write_text('"""A reasonably long module-level explanation here."""\ndef f(): pass\n')
+    chunks = extract_chunks_from_file(p, max_tokens=512, index_file_headers=False)
+    assert not [c for c in chunks if c.metadata["entity_type"] == "module_doc"]
+
+
+def test_code_indexer_honors_doc_comment_config(tmp_dir, indexer_deps):
+    """CodeConfig flags must reach extract_chunks_from_file."""
+    store, meta, embedder, sparse_encoder = indexer_deps
+    repo = tmp_dir / "cfgrepo"
+    repo.mkdir()
+    (repo / "m.py").write_text("# Reticulates the splines.\ndef helper(): pass\n")
+
+    captured = {}
+    real = code_indexer_mod.extract_chunks_from_file
+
+    def spy(*args, **kwargs):
+        captured.update(kwargs)
+        return real(*args, **kwargs)
+
+    config = CodeConfig(include_doc_comments=False, doc_comment_max_lines=7,
+                        index_file_headers=False)
+    with patch.object(code_indexer_mod, "extract_chunks_from_file", spy):
+        CodeIndexer(store, meta, embedder, sparse_encoder, config=config).index_repo(
+            repo, repo_name="cfgrepo"
+        )
+
+    assert captured["include_doc_comments"] is False
+    assert captured["doc_comment_max_lines"] == 7
+    assert captured["index_file_headers"] is False
+
+
+def test_file_header_chunk_skips_license_boilerplate(tmp_dir):
+    """A license grant is not documentation. Vendored files carry near-identical
+    license headers, which would otherwise add a duplicate chunk each."""
+    p = tmp_dir / "lic.py"
+    p.write_text(
+        '"""\n'
+        "Copyright 2020-2021, CCL Forensics\n"
+        "\n"
+        "Permission is hereby granted, free of charge, to any person obtaining a copy\n"
+        'of this software and associated documentation files, to deal in the Software.\n'
+        '"""\n'
+        "def f(): pass\n"
+    )
+    chunks = extract_chunks_from_file(p, max_tokens=512)
+    assert not [c for c in chunks if c.metadata["entity_type"] == "module_doc"]
+
+
+def test_file_header_chunk_kept_when_license_is_incidental(tmp_dir):
+    """A real description that merely mentions a license must still be kept."""
+    p = tmp_dir / "ok.py"
+    p.write_text(
+        '"""Vendored subset of the upstream reader (MIT, CCL Forensics).\n'
+        "\n"
+        "Pure-python Chromium LevelDB reader used to extract the desktop app's\n"
+        "session token from its on-disk LocalStorage store.\n"
+        '"""\n'
+        "def f(): pass\n"
+    )
+    chunks = extract_chunks_from_file(p, max_tokens=512)
+    header = [c for c in chunks if c.metadata["entity_type"] == "module_doc"]
+    assert len(header) == 1
+    assert "Chromium LevelDB reader" in header[0].text

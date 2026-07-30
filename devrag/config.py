@@ -52,6 +52,15 @@ class CodeConfig:
     max_file_bytes: int = 2_000_000  # skip larger files (generated DataSets, bundles); 0 = no cap
     respect_gitignore: bool = True
     index_docs: bool = True  # also index repo docs (md/txt/rst/…) into `documents` on `index repo`
+    # Attach a declaration's preceding doc comment (JSDoc, Go/Rust ///, C#/VB
+    # XML docs) to its chunk. tree-sitter parses these as siblings of the
+    # declaration, so without this they are indexed nowhere.
+    include_doc_comments: bool = True
+    doc_comment_max_lines: int = 30
+    # Emit one chunk per file for the leading comment block / module docstring.
+    # Set false in repos with a per-file license header, which would otherwise
+    # add a near-duplicate chunk per file.
+    index_file_headers: bool = True
     exclude_patterns: list[str] = field(default_factory=lambda: [
         "*.min.js",
         "vendor/**",
