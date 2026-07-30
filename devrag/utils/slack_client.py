@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-import random
 import threading
 import time
 from collections.abc import Iterator
 
 import httpx
 
-from devrag.utils.http import resolve_verify
+from devrag.utils.http import request_with_retries, resolve_verify
 
 
 class SlackError(Exception):
@@ -73,29 +72,19 @@ class SlackClient:
     def _call(self, endpoint: str, params: dict) -> dict:
         """POST a form-encoded API call, pacing and retrying transient failures.
 
-        Paces request starts via ``_throttle`` and retries 429/5xx/timeout up to
-        ``max_retries`` times with ``Retry-After``-aware exponential backoff.
-        Raises ``SlackAuthError`` for credential failures and ``SlackError`` for
-        any other ``ok: false`` body, so callers never silently process empty
-        results from an expired token.
+        Retries 429/5xx and any transport error up to ``max_retries`` times with
+        ``Retry-After``-aware exponential backoff. ``_throttle`` runs before
+        every attempt — including retries — so a 429 storm is not answered with
+        an unthrottled burst. Raises ``SlackAuthError`` for credential failures
+        and ``SlackError`` for any other ``ok: false`` body, so callers never
+        silently process empty results from an expired token.
         """
         data = {"token": self._token, **params}
-        for attempt in range(self._max_retries + 1):
-            last = attempt == self._max_retries
-            self._throttle()
-            try:
-                resp = self._client.post(endpoint, data=data)
-            except httpx.TimeoutException:
-                if last:
-                    raise
-                time.sleep(self._backoff(attempt))
-                continue
-            if resp.status_code == 429 or resp.status_code >= 500:
-                if last:
-                    resp.raise_for_status()
-                time.sleep(self._backoff(attempt, resp.headers.get("Retry-After")))
-                continue
-            break
+        resp = request_with_retries(
+            lambda: self._client.post(endpoint, data=data),
+            max_retries=self._max_retries,
+            before_attempt=self._throttle,
+        )
         resp.raise_for_status()
         body = resp.json()
         if not body.get("ok", False):
@@ -104,17 +93,6 @@ class SlackClient:
                 raise SlackAuthError(_AUTH_HINT.format(error=error))
             raise SlackError(f"Slack API {endpoint} failed: {error}")
         return body
-
-    @staticmethod
-    def _backoff(attempt: int, retry_after: str | None = None) -> float:
-        """Seconds to wait before the next attempt: honor ``Retry-After`` when
-        present, else exponential backoff with jitter, capped at 60s."""
-        if retry_after is not None:
-            try:
-                return min(float(retry_after), 60.0)
-            except ValueError:
-                pass
-        return min(2.0 ** attempt, 60.0) + random.uniform(0, 0.5)
 
     def _paginate(self, endpoint: str, key: str, params: dict) -> Iterator[dict]:
         """Yield items under ``key`` across cursor-paginated pages."""

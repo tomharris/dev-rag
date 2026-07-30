@@ -163,6 +163,22 @@ devrag index sessions --since 30d          # Override cursor
 devrag index sessions --logs-dir /custom/path
 ```
 
+`--since` takes a day count only — `90d`, `30d`, `180d`. Anything else (`90days`, `3w`, `6m`)
+is rejected with a usage error before any indexing work starts.
+
+#### Rate limits and network failures
+
+Every outbound sync (GitHub, Jira, Slite, Slack) retries transient failures automatically:
+HTTP 429, 5xx, and connection-level errors (DNS failure, connection refused, reset, timeout).
+Backoff honors the server's `Retry-After` when present — in both the seconds and HTTP-date
+forms — otherwise it backs off exponentially with jitter, capped at 60s per wait, for up to
+5 attempts.
+
+GitHub's primary rate limit (`403` with the quota exhausted) is waited out until the reset
+timestamp, and its secondary/abuse limit (`429`) is honored via `Retry-After`. A `403` that is
+*not* a rate limit — a token missing a scope, say — fails immediately rather than being retried,
+so the real problem surfaces straight away.
+
 #### Slack without an app
 
 Most Slack integrations require creating a Slack App and having a workspace admin

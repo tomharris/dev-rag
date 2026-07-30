@@ -1,6 +1,10 @@
 from unittest.mock import MagicMock, patch
+
+import pytest
+import typer
 from typer.testing import CliRunner
-from devrag.cli import app
+
+from devrag.cli import _parse_since, app
 
 runner = CliRunner()
 
@@ -95,3 +99,69 @@ def test_download_models_command_invokes_download_bundle():
     assert result.exit_code == 0, result.output
     assert mock_dl.call_count == 1
     assert mock_dl.call_args.kwargs.get("force") is True
+
+
+# --- --since parsing ---
+
+
+def test_parse_since_none_and_empty():
+    assert _parse_since(None) is None
+    assert _parse_since("") is None
+
+
+def test_parse_since_valid_day_count():
+    assert _parse_since("90d") == 90
+    assert _parse_since("1d") == 1
+    assert _parse_since("0d") == 0
+
+
+def test_parse_since_tolerates_surrounding_whitespace():
+    assert _parse_since("  30d  ") == 30
+
+
+@pytest.mark.parametrize("bad", ["90days", "3w", "6m", "abc", "d", "90", "-5d", "9 0d", "90dd"])
+def test_parse_since_rejects_malformed_input(bad):
+    # A bare ValueError traceback is not a usable CLI error; BadParameter renders
+    # a proper usage message and exits 2.
+    with pytest.raises(typer.BadParameter):
+        _parse_since(bad)
+
+
+def test_parse_since_error_message_names_the_value_and_format():
+    with pytest.raises(typer.BadParameter) as exc:
+        _parse_since("3w")
+    message = str(exc.value)
+    assert "3w" in message
+    assert "90d" in message
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["index", "prs", "acme/backend", "--since", "3w"],
+        ["index", "issues", "acme/backend", "--since", "90days"],
+        ["index", "jira", "--since", "abc"],
+        ["index", "slite", "--since", "d"],
+        ["index", "slack", "--since", "6m"],
+        ["index", "sessions", "--since", "-5d"],
+    ],
+)
+def test_cli_rejects_malformed_since_before_doing_work(argv):
+    # Validation must happen before the store/embedder are built, so a typo
+    # fails instantly instead of after loading models.
+    result = runner.invoke(app, argv)
+    assert result.exit_code == 2
+    assert "since" in result.output.lower()
+
+
+# --- blank query guard (embed_query contract) ---
+
+
+@patch("devrag.cli._get_search_components")
+def test_cli_search_rejects_blank_query(mock_get):
+    # embed_query() now raises on blank input; the CLI must turn that into a
+    # usage error rather than surfacing a ValueError traceback.
+    result = runner.invoke(app, ["search", "   "])
+    assert result.exit_code == 2
+    assert "query" in result.output.lower()
+    assert mock_get.call_count == 0  # rejected before loading models

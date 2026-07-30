@@ -1,9 +1,34 @@
 from __future__ import annotations
 import os
+import re
 from pathlib import Path
 import typer
 
 from devrag.utils.http import resolve_verify
+
+_SINCE_PATTERN = re.compile(r"(\d+)d")
+
+
+def _parse_since(since: str | None) -> int | None:
+    """Parse a lookback period like ``90d`` into a day count.
+
+    Every ``--since`` option shares this so a typo produces a proper usage error
+    (exit code 2) rather than a raw ``ValueError`` traceback. The old
+    ``int(since.rstrip("d"))`` stripped only trailing ``d``s, so ``90days``,
+    ``3w`` and ``abc`` all crashed — and ``90dd`` was silently accepted as 90.
+
+    Callers invoke this *before* building the store or loading embedding models,
+    so a bad value fails instantly instead of after the startup cost.
+    """
+    if not since:
+        return None
+    match = _SINCE_PATTERN.fullmatch(since.strip())
+    if not match:
+        raise typer.BadParameter(
+            f"invalid --since value {since!r}; expected a day count like '90d'"
+        )
+    return int(match.group(1))
+
 
 app = typer.Typer(name="devrag", help="Local RAG system for developer teams.")
 index_app = typer.Typer(help="Index code, docs, or PRs.")
@@ -82,6 +107,10 @@ def search(
     file_path: str = typer.Option("", "--file-path", help="Exact file path match"),
 ):
     """Search code, PRs, issues, and docs."""
+    # embed_query() rejects blank text (a zero vector would match arbitrarily),
+    # so catch it here as a usage error instead of a ValueError traceback.
+    if not query.strip():
+        raise typer.BadParameter("query must not be empty", param_hint="QUERY")
     from devrag.retrieve.hybrid_search import search_rank_dedupe
     from devrag.retrieve.query_router import QueryRouter
     from devrag.stores.metadata_db import MetadataDB
@@ -280,6 +309,7 @@ def index_prs(
     since: str | None = typer.Option(None, help="Lookback period (e.g. 90d). If set, overrides the stored cursor; otherwise incremental sync from cursor (or 90d on first run)."),
 ):
     """Sync GitHub PRs for a repository."""
+    days = _parse_since(since)
     from devrag.config import load_config
     from devrag.ingest.pr_indexer import PRIndexer
     from devrag.stores.qdrant_store import QdrantStore
@@ -297,7 +327,6 @@ def index_prs(
     meta = MetadataDB(str(db_dir / "metadata.db"))
     embedder = _make_embedder(config)
     sparse_encoder = _make_sparse_encoder(config)
-    days = int(since.rstrip("d")) if since else None
     github = GitHubClient(token=token, verify=resolve_verify(config.network.ca_bundle))
     indexer = PRIndexer(store, meta, embedder, sparse_encoder, github, chunk_max_tokens=config.prs.chunk_max_tokens)
     stats = indexer.sync(repo, since_days=days)
@@ -310,6 +339,7 @@ def index_issues(
     since: str = typer.Option("90d", help="Lookback period (e.g. 90d)"),
 ):
     """Sync GitHub issues for a repository."""
+    days = _parse_since(since)
     from devrag.config import load_config
     from devrag.ingest.issue_indexer import IssueIndexer
     from devrag.stores.qdrant_store import QdrantStore
@@ -327,7 +357,6 @@ def index_issues(
     meta = MetadataDB(str(db_dir / "metadata.db"))
     embedder = _make_embedder(config)
     sparse_encoder = _make_sparse_encoder(config)
-    days = int(since.rstrip("d"))
     github = GitHubClient(token=token, verify=resolve_verify(config.network.ca_bundle))
     indexer = IssueIndexer(store, meta, embedder, sparse_encoder, github, chunk_max_tokens=config.issues.chunk_max_tokens,
                            include_labels=config.issues.include_labels, exclude_labels=config.issues.exclude_labels)
@@ -340,6 +369,7 @@ def index_jira(
     since: str = typer.Option("90d", help="Lookback period (e.g. 90d)"),
 ):
     """Sync Jira Cloud tickets based on configured JQL filter."""
+    days = _parse_since(since)
     from devrag.config import load_config
     from devrag.ingest.jira_indexer import JiraIndexer
     from devrag.stores.qdrant_store import QdrantStore
@@ -364,7 +394,6 @@ def index_jira(
     meta = MetadataDB(str(db_dir / "metadata.db"))
     embedder = _make_embedder(config)
     sparse_encoder = _make_sparse_encoder(config)
-    days = int(since.rstrip("d"))
     jira = JiraClient(instance_url=config.jira.instance_url, email=email, api_token=token,
                       verify=resolve_verify(config.network.ca_bundle))
     indexer = JiraIndexer(store, meta, embedder, sparse_encoder, jira, chunk_max_tokens=config.jira.chunk_max_tokens)
@@ -377,6 +406,7 @@ def index_slite(
     since: str = typer.Option("90d", help="Lookback period (e.g. 90d)"),
 ):
     """Sync Slite pages for the configured workspace."""
+    days = _parse_since(since)
     from devrag.config import load_config
     from devrag.ingest.slite_indexer import SliteIndexer
     from devrag.stores.qdrant_store import QdrantStore
@@ -394,7 +424,6 @@ def index_slite(
     meta = MetadataDB(str(db_dir / "metadata.db"))
     embedder = _make_embedder(config)
     sparse_encoder = _make_sparse_encoder(config)
-    days = int(since.rstrip("d"))
     slite = SliteClient(api_token=token, verify=resolve_verify(config.network.ca_bundle),
                         max_retries=config.slite.max_retries)
     indexer = SliteIndexer(store, meta, embedder, sparse_encoder, slite, chunk_max_tokens=config.slite.chunk_max_tokens,
@@ -413,6 +442,7 @@ def index_slack(
     Requires the xoxc token and xoxd cookie in the configured env vars
     (default SLACK_XOXC_TOKEN / SLACK_XOXD_COOKIE).
     """
+    days = _parse_since(since)
     from devrag.config import load_config
     from devrag.ingest.slack_indexer import SlackIndexer
     from devrag.stores.qdrant_store import QdrantStore
@@ -435,7 +465,6 @@ def index_slack(
     meta = MetadataDB(str(db_dir / "metadata.db"))
     embedder = _make_embedder(config)
     sparse_encoder = _make_sparse_encoder(config)
-    days = int(since.rstrip("d"))
     rpm = config.slack.requests_per_minute
     slack = SlackClient(token=token, cookie=cookie, ca_bundle=config.network.ca_bundle,
                         min_request_interval=(60.0 / rpm if rpm > 0 else 0.0),
@@ -456,6 +485,7 @@ def index_sessions(
     logs_dir: str | None = typer.Option(None, "--logs-dir", help="Override sessions.logs_dir from config"),
 ):
     """Index local Claude Code JSONL session logs."""
+    days = _parse_since(since)
     from devrag.config import load_config
     from devrag.ingest.session_indexer import SessionsIndexer
     from devrag.stores.qdrant_store import QdrantStore
@@ -468,7 +498,6 @@ def index_sessions(
     meta = MetadataDB(str(db_dir / "metadata.db"))
     embedder = _make_embedder(config)
     sparse_encoder = _make_sparse_encoder(config)
-    days = int(since.rstrip("d")) if since else None
     dir_path = Path((logs_dir or config.sessions.logs_dir)).expanduser()
     indexer = SessionsIndexer(store, meta, embedder, sparse_encoder, dir_path,
                               chunk_max_tokens=config.sessions.chunk_max_tokens,

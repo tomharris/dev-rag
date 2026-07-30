@@ -79,4 +79,16 @@ class OllamaEmbedder:
         return result
 
     def embed_query(self, text: str) -> list[float]:
+        """Embed a single search query.
+
+        Blank input is rejected rather than embedded. ``embed()`` deliberately
+        substitutes a zero vector for a blank *chunk* — position must be kept so
+        results line up with inputs, and one empty file shouldn't abort an index
+        run. A blank *query* has no such excuse: a zero vector has undefined
+        cosine similarity against every chunk, so it would return arbitrary
+        results that look like genuine hits. Failing loudly is the safer
+        contract for the one caller that can't tolerate silent nonsense.
+        """
+        if not text.strip():
+            raise ValueError("embed_query() requires non-empty text")
         return self.embed([text])[0]

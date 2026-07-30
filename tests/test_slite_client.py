@@ -11,7 +11,7 @@ API = "https://api.slite.com/v1"
 def test_request_retries_transient_429(monkeypatch):
     """A 429 that clears on retry should not surface as an error."""
     # Don't actually sleep during the backoff.
-    monkeypatch.setattr("devrag.utils.slite_client.time.sleep", lambda *_: None)
+    monkeypatch.setattr("devrag.utils.http.time.sleep", lambda *_: None)
 
     route = respx.get(f"{API}/notes/page-1").mock(side_effect=[
         httpx.Response(429, headers={"Retry-After": "0"}, json={}),
@@ -26,7 +26,7 @@ def test_request_retries_transient_429(monkeypatch):
 @respx.mock
 def test_request_raises_after_exhausting_retries(monkeypatch):
     """A persistent 429 raises HTTPStatusError once retries are exhausted."""
-    monkeypatch.setattr("devrag.utils.slite_client.time.sleep", lambda *_: None)
+    monkeypatch.setattr("devrag.utils.http.time.sleep", lambda *_: None)
 
     respx.get(f"{API}/notes/page-1").mock(
         return_value=httpx.Response(429, headers={"Retry-After": "0"}, json={})
@@ -39,7 +39,7 @@ def test_request_raises_after_exhausting_retries(monkeypatch):
 
 @respx.mock
 def test_request_retries_5xx(monkeypatch):
-    monkeypatch.setattr("devrag.utils.slite_client.time.sleep", lambda *_: None)
+    monkeypatch.setattr("devrag.utils.http.time.sleep", lambda *_: None)
 
     route = respx.get(f"{API}/notes/page-1").mock(side_effect=[
         httpx.Response(503, json={}),

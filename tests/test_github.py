@@ -137,3 +137,156 @@ def test_parse_diff_hunks():
 def test_github_client_no_token():
     client = GitHubClient(token=None)
     assert "Authorization" not in client._headers
+
+
+# --- rate-limit / retry handling ---
+
+
+@pytest.fixture
+def no_sleep(monkeypatch):
+    monkeypatch.setattr("devrag.utils.http.time.sleep", lambda *_: None)
+
+
+@respx.mock
+def test_non_numeric_rate_limit_headers_do_not_crash(no_sleep):
+    # A proxy or error page can put anything in these headers; bare int() turned
+    # that into a ValueError that aborted the whole sync.
+    calls = {"n": 0}
+
+    def handler(request):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return httpx.Response(403, json={"message": "rate limited"}, headers={
+                "x-ratelimit-remaining": "unknown",
+                "x-ratelimit-reset": "not-a-timestamp",
+                "retry-after": "later",
+            })
+        return httpx.Response(200, json=[{"number": 1}])
+
+    respx.get("https://api.github.com/repos/acme/backend/pulls").mock(side_effect=handler)
+    client = GitHubClient(token="t")
+    # Unparseable headers must not raise. With no usable signal the 403 is
+    # treated as a genuine permission error and surfaced as an HTTP error.
+    with pytest.raises(httpx.HTTPStatusError):
+        client.list_prs("acme/backend")
+    assert calls["n"] == 1
+
+
+@respx.mock
+def test_non_numeric_reset_still_retries_when_remaining_is_zero(no_sleep):
+    calls = {"n": 0}
+
+    def handler(request):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return httpx.Response(403, json={"message": "rate limited"}, headers={
+                "x-ratelimit-remaining": "0",
+                "x-ratelimit-reset": "garbage",
+            })
+        return httpx.Response(200, json=[{"number": 1}])
+
+    respx.get("https://api.github.com/repos/acme/backend/pulls").mock(side_effect=handler)
+    result = GitHubClient(token="t").list_prs("acme/backend")
+    assert [p["number"] for p in result] == [1]
+    assert calls["n"] == 2
+
+
+@respx.mock
+def test_secondary_rate_limit_429_is_retried(no_sleep):
+    # GitHub's secondary limits return 429 + Retry-After with a NON-zero
+    # x-ratelimit-remaining, so a remaining==0 check alone never fired.
+    calls = {"n": 0}
+
+    def handler(request):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return httpx.Response(429, json={"message": "secondary rate limit"},
+                                  headers={"retry-after": "1", "x-ratelimit-remaining": "4999"})
+        return httpx.Response(200, json=[{"number": 7}])
+
+    respx.get("https://api.github.com/repos/acme/backend/pulls").mock(side_effect=handler)
+    result = GitHubClient(token="t").list_prs("acme/backend")
+    assert [p["number"] for p in result] == [7]
+    assert calls["n"] == 2
+
+
+@respx.mock
+def test_consecutive_429s_are_all_retried(no_sleep):
+    # The old single-shot retry gave up on the second 429.
+    calls = {"n": 0}
+
+    def handler(request):
+        calls["n"] += 1
+        if calls["n"] <= 3:
+            return httpx.Response(429, headers={"retry-after": "0"})
+        return httpx.Response(200, json=[{"number": 9}])
+
+    respx.get("https://api.github.com/repos/acme/backend/pulls").mock(side_effect=handler)
+    result = GitHubClient(token="t", max_retries=5).list_prs("acme/backend")
+    assert [p["number"] for p in result] == [9]
+    assert calls["n"] == 4
+
+
+@respx.mock
+def test_5xx_is_retried(no_sleep):
+    calls = {"n": 0}
+
+    def handler(request):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return httpx.Response(502)
+        return httpx.Response(200, json=[{"number": 11}])
+
+    respx.get("https://api.github.com/repos/acme/backend/pulls").mock(side_effect=handler)
+    result = GitHubClient(token="t").list_prs("acme/backend")
+    assert [p["number"] for p in result] == [11]
+    assert calls["n"] == 2
+
+
+@respx.mock
+def test_transport_error_is_retried(no_sleep):
+    calls = {"n": 0}
+
+    def handler(request):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise httpx.ConnectError("connection refused")
+        return httpx.Response(200, json=[{"number": 13}])
+
+    respx.get("https://api.github.com/repos/acme/backend/pulls").mock(side_effect=handler)
+    result = GitHubClient(token="t").list_prs("acme/backend")
+    assert [p["number"] for p in result] == [13]
+    assert calls["n"] == 2
+
+
+@respx.mock
+def test_permission_403_is_not_retried(no_sleep):
+    # A 403 with quota remaining is an authorization failure, not a rate limit —
+    # retrying it just delays an error the caller needs to see.
+    route = respx.get("https://api.github.com/repos/acme/backend/pulls").mock(
+        return_value=httpx.Response(403, json={"message": "Resource not accessible"},
+                                    headers={"x-ratelimit-remaining": "4999"})
+    )
+    with pytest.raises(httpx.HTTPStatusError):
+        GitHubClient(token="t", max_retries=3).list_prs("acme/backend")
+    assert route.call_count == 1
+
+
+@respx.mock
+def test_404_is_not_retried(no_sleep):
+    route = respx.get("https://api.github.com/repos/acme/backend/pulls").mock(
+        return_value=httpx.Response(404, json={"message": "Not Found"})
+    )
+    with pytest.raises(httpx.HTTPStatusError):
+        GitHubClient(token="t", max_retries=3).list_prs("acme/backend")
+    assert route.call_count == 1
+
+
+@respx.mock
+def test_exhausted_rate_limit_retries_raise(no_sleep):
+    route = respx.get("https://api.github.com/repos/acme/backend/pulls").mock(
+        return_value=httpx.Response(429, headers={"retry-after": "0"})
+    )
+    with pytest.raises(httpx.HTTPStatusError):
+        GitHubClient(token="t", max_retries=2).list_prs("acme/backend")
+    assert route.call_count == 3
