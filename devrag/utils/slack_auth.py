@@ -37,6 +37,19 @@ _NO_COOKIE_HINT = (
     "in the README."
 )
 
+# Where the Slack desktop app keeps its Chromium profile on macOS, in probe order.
+# The Mac App Store build is sandboxed, so its profile lives under ~/Library/
+# Containers rather than directly under ~/Library/Application Support — a machine
+# with only the App Store build has *no* ~/Library/Application Support/Slack at
+# all. Both the cookie store and the localStorage LevelDB below are derived from
+# this one list so they can never disagree about which install they came from.
+_MACOS_SLACK_DIRS = (
+    # Direct download from slack.com.
+    "~/Library/Application Support/Slack",
+    # Mac App Store (sandboxed container).
+    "~/Library/Containers/com.tinyspeck.slackmacgap/Data/Library/Application Support/Slack",
+)
+
 # Where the Slack desktop app keeps its Chromium cookie store, per OS. These are
 # handed to ``ChromiumBased`` as candidate lists; it globs and picks the first
 # one that exists, so order/extra entries are harmless.
@@ -51,8 +64,7 @@ _SLACK_APP_PATHS = {
         "~/.var/app/com.slack.Slack/config/Slack/Network/Cookies",
     ],
     "osx_cookies": [
-        "~/Library/Application Support/Slack/Cookies",
-        "~/Library/Application Support/Slack/Network/Cookies",
+        f"{d}/{leaf}" for d in _MACOS_SLACK_DIRS for leaf in ("Cookies", "Network/Cookies")
     ],
     # Windows paths are resolved relative to %APPDATA% by browser_cookie3, so
     # they must NOT include the variable themselves.
@@ -65,8 +77,8 @@ _SLACK_APP_PATHS = {
 
 # Where the Slack desktop app keeps its Chromium localStorage LevelDB, per OS.
 _SLACK_LOCAL_STORAGE_PATHS = [
-    # macOS
-    "~/Library/Application Support/Slack/Local Storage/leveldb",
+    # macOS (direct download, then Mac App Store container)
+    *(f"{d}/Local Storage/leveldb" for d in _MACOS_SLACK_DIRS),
     # Linux (native, snap, flatpak)
     "~/.config/Slack/Local Storage/leveldb",
     "~/snap/slack/current/.config/Slack/Local Storage/leveldb",
@@ -78,6 +90,12 @@ _NO_LOCAL_STORAGE_HINT = (
     "Make sure the Slack desktop app is installed and you're signed in, or fall "
     "back to the manual extraction steps in the README."
 )
+
+# macOS keychain accounts holding the app's cookie-encryption key, in probe order.
+# Slack diverges from Chrome's `<Browser>`/`<Browser> Safe Storage` convention and
+# the account differs by install type: the direct download uses "Slack Key", the
+# Mac App Store build "Slack App Store Key". All are under the same service name.
+_MACOS_KEYCHAIN_ACCOUNTS = ("Slack Key", "Slack App Store Key", "Slack")
 
 _NO_TOKEN_HINT = (
     "Found the Slack desktop app's local data but no xoxc token for any workspace. "
@@ -174,39 +192,57 @@ def read_d_cookie_from_slack_app(domain: str = "slack.com") -> str:
     ``Local State`` DPAPI key on Windows). ``ChromiumBased`` copies the DB to a
     temp file before reading, so this works even while Slack is running.
 
-    The macOS keychain entry stores the key under account ``"Slack Key"`` (NOT
-    ``"Slack"`` — Slack diverges from Chrome's ``<Browser>``/``<Browser> Safe
-    Storage`` convention here). ``browser_cookie3`` looks the key up with
-    ``security find-generic-password -a <osx_key_user> -s <osx_key_service>``; a
-    wrong account makes that query fail *with no prompt* (item-not-found, not
-    access-denied), after which browser_cookie3 silently substitutes the default
-    "peanuts" password and decryption fails with "Unable to get key for cookie
-    decryption". So ``osx_key_user`` must match the real account exactly.
+    The macOS keychain account varies by install type (see
+    ``_MACOS_KEYCHAIN_ACCOUNTS``), so we try each in turn. ``browser_cookie3``
+    looks the key up with ``security find-generic-password -a <osx_key_user> -s
+    <osx_key_service>``; a wrong account makes that query fail *with no prompt*
+    (item-not-found, not access-denied), after which browser_cookie3 silently
+    substitutes the default "peanuts" password. That usually surfaces as "Unable
+    to get key for cookie decryption", but not always: cookie *names* are stored
+    in plaintext in the SQLite DB and only *values* are encrypted, so a
+    wrong-but-existing account can yield a ``d`` cookie holding garbage rather
+    than raising. Hence ``_find_d_cookie`` requires the value to look like a real
+    ``xoxd-`` cookie before we accept it, which makes the probe order above a
+    convenience rather than a correctness requirement.
 
     Raises ``SlackAuthError`` (app not installed / not logged in / cookie absent).
     """
     from browser_cookie3 import ChromiumBased
 
-    try:
-        jar = ChromiumBased(
-            browser="Slack",
-            domain_name=domain,
-            os_crypt_name="slack",
-            osx_key_service="Slack Safe Storage",
-            osx_key_user="Slack Key",
-            **_SLACK_APP_PATHS,
-        ).load()
-    except Exception as exc:  # no cookie file (app not installed) / decryption error
-        raise SlackAuthError(
-            _NO_COOKIE_HINT.format(detail=exc, source_label="the Slack desktop app")
-        ) from exc
-    return _find_d_cookie(jar, "the Slack desktop app")
+    last_detail: object = "no keychain account yielded a usable `d` cookie"
+    for account in _MACOS_KEYCHAIN_ACCOUNTS:
+        try:
+            jar = ChromiumBased(
+                browser="Slack",
+                domain_name=domain,
+                os_crypt_name="slack",
+                osx_key_service="Slack Safe Storage",
+                osx_key_user=account,
+                **_SLACK_APP_PATHS,
+            ).load()
+            return _find_d_cookie(jar, "the Slack desktop app")
+        except Exception as exc:  # no cookie file / wrong key / undecryptable value
+            last_detail = exc
+
+    accounts = ", ".join(repr(a) for a in _MACOS_KEYCHAIN_ACCOUNTS)
+    raise SlackAuthError(
+        _NO_COOKIE_HINT.format(
+            detail=f"{last_detail}; tried macOS keychain accounts {accounts}",
+            source_label="the Slack desktop app",
+        )
+    )
 
 
 def _find_d_cookie(jar, source_label: str) -> str:
-    """Return the ``d`` cookie value from ``jar`` or raise the no-cookie hint."""
+    """Return the ``d`` cookie value from ``jar`` or raise the no-cookie hint.
+
+    Only a value that looks like a real Slack session cookie (``xoxd-…``) is
+    accepted: a cookie decrypted with the wrong key still carries the right
+    *name* (names aren't encrypted), so the prefix is what distinguishes a
+    genuine hit from garbage.
+    """
     for cookie in jar:
-        if cookie.name == "d":
+        if cookie.name == "d" and str(cookie.value or "").startswith("xoxd-"):
             return cookie.value
     raise SlackAuthError(
         _NO_COOKIE_HINT.format(detail="no `d` cookie found", source_label=source_label)

@@ -201,8 +201,14 @@ prints the two `export` lines, so `eval "$(…)"` sets `SLACK_XOXC_TOKEN` /
 `SLACK_XOXD_COOKIE` in your shell. The desktop app is a Chromium app, so its cookie store
 decrypts with the same machinery used for browsers (no extra setup) and its localStorage
 is read with a bundled pure-python LevelDB reader — both work even while Slack is running
-(the stores are copied first; nothing is written to disk by devrag). Set `slack.workspace`
-in `.devrag.yaml` to skip `--workspace` on re-runs.
+(the stores are copied first; nothing is written to disk by devrag). Both the direct
+download from slack.com and the **Mac App Store** build are found automatically (the
+latter is sandboxed, so it keeps its profile — and its cookie-encryption key — somewhere
+else entirely). Set `slack.workspace` in `.devrag.yaml` to skip `--workspace` on re-runs.
+
+`--workspace` is the **subdomain**, not the workspace's display name: for a workspace
+shown as "Futures Inc" at `https://pipeline.slack.com/`, pass `--workspace pipeline`. Get
+it wrong and devrag lists the subdomains you're signed in to.
 
 `--browser` selects the source explicitly: `slack` (the desktop app) or
 `chrome`/`firefox`/`brave`/`edge`/`chromium`. With no `--browser`, devrag tries the Slack

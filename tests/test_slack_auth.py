@@ -150,15 +150,36 @@ def fake_browser_cookie3(monkeypatch):
 
 def _slack_app_returning(value):
     """A fake ``ChromiumBased`` whose ``.load()`` yields a jar with a ``d`` cookie."""
+    return _slack_app_by_account({}, default=value)
+
+
+def _slack_app_by_account(behaviors, default=None):
+    """A fake ``ChromiumBased`` driven by a per-keychain-account behaviour map.
+
+    ``behaviors`` maps ``osx_key_user`` → the ``d`` cookie value that account
+    decrypts to, or an ``Exception`` instance for accounts whose key lookup
+    fails. ``default`` applies to accounts not named in the map; ``None`` means
+    "this account has no keychain entry" and raises, mirroring browser_cookie3.
+    ``accounts`` records the probe order so tests can assert on it.
+    """
     class _FakeSlackApp:
+        accounts: list = []
         last_kwargs: dict = {}
 
         def __init__(self, **kwargs):
             type(self).last_kwargs = kwargs
+            self._account = kwargs.get("osx_key_user")
+            type(self).accounts.append(self._account)
 
         def load(self):
-            return [_FakeCookie("d", value)]
+            outcome = behaviors.get(self._account, default)
+            if isinstance(outcome, Exception):
+                raise outcome
+            if outcome is None:
+                raise Exception("Unable to get key for cookie decryption")
+            return [_FakeCookie("d", outcome)]
 
+    _FakeSlackApp.accounts = []
     return _FakeSlackApp
 
 
@@ -178,6 +199,36 @@ def test_read_d_cookie_unknown_browser(fake_browser_cookie3):
         read_d_cookie(browser="netscape")
 
 
+# --- install-location probing -----------------------------------------------
+#
+# The Mac App Store build is sandboxed: its profile lives under ~/Library/
+# Containers, and such a machine has no ~/Library/Application Support/Slack at
+# all. Both the cookie store and the localStorage LevelDB must probe it.
+
+_APP_STORE_MARKER = "com.tinyspeck.slackmacgap"
+
+
+def test_macos_paths_cover_both_install_locations():
+    cookies = slack_auth._SLACK_APP_PATHS["osx_cookies"]
+    leveldb = [p for p in slack_auth._SLACK_LOCAL_STORAGE_PATHS if p.startswith("~/Library")]
+
+    for paths in (cookies, leveldb):
+        assert any(_APP_STORE_MARKER in p for p in paths)
+        # Direct download stays first so it wins when both installs exist.
+        assert _APP_STORE_MARKER not in paths[0]
+
+
+def test_slack_local_storage_dir_finds_app_store_container(monkeypatch, tmp_path):
+    missing = tmp_path / "Application Support" / "Slack" / "Local Storage" / "leveldb"
+    container = tmp_path / _APP_STORE_MARKER / "Slack" / "Local Storage" / "leveldb"
+    container.mkdir(parents=True)
+
+    monkeypatch.setattr(
+        slack_auth, "_SLACK_LOCAL_STORAGE_PATHS", [str(missing), str(container)]
+    )
+    assert slack_auth.slack_local_storage_dir() == container
+
+
 # --- Slack desktop app source ----------------------------------------------
 
 def test_read_d_cookie_from_slack_app_reads_desktop_cookie(fake_browser_cookie3):
@@ -188,10 +239,38 @@ def test_read_d_cookie_from_slack_app_reads_desktop_cookie(fake_browser_cookie3)
     assert kwargs["browser"] == "Slack"
     assert kwargs["os_crypt_name"] == "slack"
     assert kwargs["osx_key_service"] == "Slack Safe Storage"
-    # The macOS keychain entry's account is "Slack Key", not "Slack". A wrong
-    # account makes `security find-generic-password` fail silently (no prompt),
-    # so browser_cookie3 falls back to the default password and decryption fails.
-    assert kwargs["osx_key_user"] == "Slack Key"
+    # The keychain account is probed from _MACOS_KEYCHAIN_ACCOUNTS; the direct
+    # download's "Slack Key" comes first, and one success stops the probe.
+    assert fake_browser_cookie3.ChromiumBased.accounts == ["Slack Key"]
+
+
+def test_read_d_cookie_from_slack_app_tries_app_store_keychain_account(fake_browser_cookie3):
+    # Mac App Store build: "Slack Key" doesn't exist, "Slack App Store Key" does.
+    # A machine with only the sandboxed install must not fail on the first miss.
+    fake_browser_cookie3.ChromiumBased = _slack_app_by_account(
+        {"Slack App Store Key": "xoxd-appstore"}
+    )
+    assert read_d_cookie_from_slack_app() == "xoxd-appstore"
+    assert fake_browser_cookie3.ChromiumBased.accounts == ["Slack Key", "Slack App Store Key"]
+
+
+def test_read_d_cookie_from_slack_app_rejects_undecryptable_value(fake_browser_cookie3):
+    # Cookie *names* aren't encrypted, so a wrong-but-existing keychain account
+    # yields a `d` cookie holding garbage instead of raising. That must be
+    # rejected on the xoxd- prefix and the next account tried.
+    fake_browser_cookie3.ChromiumBased = _slack_app_by_account(
+        {"Slack Key": "\x17\xa3garbage", "Slack App Store Key": "xoxd-real"}
+    )
+    assert read_d_cookie_from_slack_app() == "xoxd-real"
+
+
+def test_read_d_cookie_from_slack_app_raises_when_no_account_works(fake_browser_cookie3):
+    fake_browser_cookie3.ChromiumBased = _slack_app_by_account({}, default="not-a-token")
+    with pytest.raises(SlackAuthError, match="Slack App Store Key"):
+        read_d_cookie_from_slack_app()
+    assert fake_browser_cookie3.ChromiumBased.accounts == list(
+        slack_auth._MACOS_KEYCHAIN_ACCOUNTS
+    )
 
 
 def test_read_d_cookie_from_slack_app_raises_when_unavailable(fake_browser_cookie3):
