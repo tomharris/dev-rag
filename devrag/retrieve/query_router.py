@@ -19,9 +19,14 @@ _PR_PATTERNS = [
     r"\bwhy\b.*\bremov(?:e|ed)\b", r"\bintroduc(?:e|ed)\b", r"\brevert(?:ed)?\b", r"\bdeprecated?\b",
 ]
 
+# Past-tense only for "filed"/"reported", plus an explicit "file a bug" form.
+# The optional-d spellings (`\bfiled?\b`, `\breported?\b`) matched the bare
+# words "file" and "report" — among the most common words in a code question —
+# so "how does incremental indexing decide to skip a file" routed to issues.
 _ISSUE_PATTERNS = [
     r"\bbug\b", r"\bissue[sd]?\b", r"\bfeature\s+request\b",
-    r"\breported?\b", r"\bfiled?\b", r"\bticket\b",
+    r"\breported\b", r"\bfiled\b", r"\bticket\b",
+    r"\b(?:file|report)\s+(?:a|an)\s+(?:bug|issue|ticket)\b",
 ]
 
 _JIRA_PATTERNS = [
@@ -66,50 +71,72 @@ _USAGE_PATTERNS = [
 ]
 
 
+# Every non-session intent includes `code_chunks`: these patterns fire on words
+# that *name* a source ("slite", "ticket", "migrated") but usually describe code,
+# and an intent that omits code can only return the wrong thing. Explicit
+# `scope=` still narrows to one source. Session is the exception — a question
+# about a past conversation is not answered by code.
+#
+# Ordered intent table. `route` and `classify` walk this same list, so the
+# collections a query is sent to and the label it is logged under can never
+# disagree. Order is significant — it reproduces the original if/elif chain
+# exactly, first match wins (e.g. session before slack, so "what did we discuss
+# last session" is not stolen by a later rule).
+_INTENT_RULES: list[tuple[str, list[str], list[str]]] = [
+    ("session", _SESSION_PATTERNS, SESSION_COLLECTIONS),
+    ("slack", _SLACK_PATTERNS, SLACK_COLLECTIONS + CODE_COLLECTIONS),
+    ("slite", _SLITE_PATTERNS, SLITE_COLLECTIONS + DOC_COLLECTIONS + CODE_COLLECTIONS),
+    ("jira", _JIRA_PATTERNS, JIRA_COLLECTIONS + CODE_COLLECTIONS),
+    ("issue", _ISSUE_PATTERNS, ISSUE_COLLECTIONS + JIRA_COLLECTIONS + CODE_COLLECTIONS),
+    ("pr", _PR_PATTERNS, PR_COLLECTIONS + CODE_COLLECTIONS),
+    ("doc", _DOC_PATTERNS, DOC_COLLECTIONS + CODE_COLLECTIONS),
+    ("usage", _USAGE_PATTERNS, ["code_chunks", "pr_diffs"]),
+    ("code", _CODE_PATTERNS, CODE_COLLECTIONS),
+]
+
+_COMPILED_RULES = [
+    (name, [re.compile(p) for p in patterns], collections)
+    for name, patterns, collections in _INTENT_RULES
+]
+
+_SCOPES: dict[str, list[str]] = {
+    "code": CODE_COLLECTIONS,
+    "prs": PR_COLLECTIONS,
+    "issues": ISSUE_COLLECTIONS,
+    "jira": JIRA_COLLECTIONS,
+    "slite": SLITE_COLLECTIONS,
+    "slack": SLACK_COLLECTIONS,
+    "docs": DOC_COLLECTIONS,
+    "sessions": SESSION_COLLECTIONS,
+}
+
+# Label used when no intent pattern matches and the query fans out to everything.
+UNROUTED = "unrouted"
+
+
 class QueryRouter:
     def route(self, query: str, scope: str = "all") -> list[str]:
-        if scope == "code":
-            return CODE_COLLECTIONS
-        if scope == "prs":
-            return PR_COLLECTIONS
-        if scope == "issues":
-            return ISSUE_COLLECTIONS
-        if scope == "jira":
-            return JIRA_COLLECTIONS
-        if scope == "slite":
-            return SLITE_COLLECTIONS
-        if scope == "slack":
-            return SLACK_COLLECTIONS
-        if scope == "docs":
-            return DOC_COLLECTIONS
-        if scope == "sessions":
-            return SESSION_COLLECTIONS
+        if scope in _SCOPES:
+            return list(_SCOPES[scope])
+        _, collections = self._match(query)
+        return collections
+
+    def classify(self, query: str, scope: str = "all") -> str:
+        """Return the intent label a query routes under.
+
+        Used for per-intent metric breakdowns: "usage" and "doc" queries are the
+        multi-hop/architectural shapes that graph retrieval would target, while
+        "code" is the single-hop shape it is not expected to help. An explicit
+        scope short-circuits pattern matching, so it is reported as `scope:<name>`.
+        """
+        if scope in _SCOPES:
+            return f"scope:{scope}"
+        name, _ = self._match(query)
+        return name
+
+    def _match(self, query: str) -> tuple[str, list[str]]:
         q = query.lower()
-        for pattern in _SESSION_PATTERNS:
-            if re.search(pattern, q):
-                return SESSION_COLLECTIONS
-        for pattern in _SLACK_PATTERNS:
-            if re.search(pattern, q):
-                return SLACK_COLLECTIONS + CODE_COLLECTIONS
-        for pattern in _SLITE_PATTERNS:
-            if re.search(pattern, q):
-                return SLITE_COLLECTIONS + DOC_COLLECTIONS
-        for pattern in _JIRA_PATTERNS:
-            if re.search(pattern, q):
-                return JIRA_COLLECTIONS + CODE_COLLECTIONS
-        for pattern in _ISSUE_PATTERNS:
-            if re.search(pattern, q):
-                return ISSUE_COLLECTIONS + JIRA_COLLECTIONS
-        for pattern in _PR_PATTERNS:
-            if re.search(pattern, q):
-                return PR_COLLECTIONS
-        for pattern in _DOC_PATTERNS:
-            if re.search(pattern, q):
-                return DOC_COLLECTIONS + CODE_COLLECTIONS
-        for pattern in _USAGE_PATTERNS:
-            if re.search(pattern, q):
-                return ["code_chunks", "pr_diffs"]
-        for pattern in _CODE_PATTERNS:
-            if re.search(pattern, q):
-                return CODE_COLLECTIONS
-        return ALL_COLLECTIONS
+        for name, patterns, collections in _COMPILED_RULES:
+            if any(p.search(q) for p in patterns):
+                return name, list(collections)
+        return UNROUTED, list(ALL_COLLECTIONS)

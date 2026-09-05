@@ -112,6 +112,7 @@ def search(
     if not query.strip():
         raise typer.BadParameter("query must not be empty", param_hint="QUERY")
     from devrag.retrieve.hybrid_search import search_rank_dedupe
+    from devrag.retrieve.metrics import log_search
     from devrag.retrieve.query_router import QueryRouter
     from devrag.stores.metadata_db import MetadataDB
     from devrag.utils.formatters import format_search_results
@@ -139,11 +140,19 @@ def search(
         where["channel_id"] = channel_id
     if file_path:
         where["file_path"] = file_path
+    meta = None
+    if config.retrieval.log_queries or (not repo and config.retrieval.repo_boost):
+        db_dir = Path("~/.local/share/devrag").expanduser()
+        meta = MetadataDB(str(db_dir / "metadata.db"))
     prefer_repo = ""
     if not repo and config.retrieval.repo_boost:
-        db_dir = Path("~/.local/share/devrag").expanduser()
-        prefer_repo = infer_repo(Path.cwd(), MetadataDB(str(db_dir / "metadata.db")).get_all_repos())
-    results = search_rank_dedupe(hybrid, reranker, query, collections, where or None, config, final_k, prefer_repo)
+        prefer_repo = infer_repo(Path.cwd(), meta.get_all_repos())
+    timings: dict = {}
+    results = search_rank_dedupe(hybrid, reranker, query, collections, where or None, config,
+                                 final_k, prefer_repo, timings=timings)
+    if config.retrieval.log_queries:
+        log_search(meta, query, collections, router.classify(query, scope=scope),
+                   timings, len(results))
     typer.echo(format_search_results(results))
 
 
@@ -773,9 +782,17 @@ def eval_run(
     queries_file: str = typer.Argument(..., help="Path to test queries JSONL file"),
     output: str = typer.Option("results.jsonl", help="Output file for results"),
     top_k: int = typer.Option(5, help="Number of results per query"),
+    prefer_repo: str = typer.Option("", "--prefer-repo", help="Apply the active-repo boost for this repo (default: off, for reproducibility)"),
+    group_by: str = typer.Option("hop_type", "--group-by", help="Test-case label to break metrics down by (e.g. hop_type, intent); empty to skip"),
 ):
-    """Run eval queries and compute metrics."""
-    from devrag.eval import load_test_queries, compute_metrics, save_results
+    """Run eval queries through the production retrieval pipeline and compute metrics.
+
+    Each JSONL case takes: `query`, optional `expected_files` (repo-relative) and
+    `expected_prs`, an optional `scope` and `filters` dict passed through to
+    search, and free-form labels (`hop_type`, `intent`) used for the breakdown.
+    """
+    from devrag.eval import load_test_queries, compute_metrics, compute_grouped_metrics, save_results
+    from devrag.retrieve.hybrid_search import search_rank_dedupe
     from devrag.retrieve.query_router import QueryRouter
     hybrid, reranker, config = _get_search_components()
     router = QueryRouter()
@@ -784,22 +801,40 @@ def eval_run(
     all_results: list[dict] = []
     for case in test_cases:
         query = case["query"]
-        collections = router.route(query)
-        candidates = hybrid.search(query, top_k=config.retrieval.top_k, collections=collections)
-        if reranker and candidates:
-            results = reranker.rerank(query, candidates, top_k=top_k)
-        else:
-            results = candidates[:top_k]
+        scope = case.get("scope", "all")
+        collections = router.route(query, scope=scope)
+        # Same call the CLI and MCP server make, so the baseline measures the
+        # pipeline users actually get — dedupe and final-k slice included. The
+        # previous implementation reranked straight to top_k and skipped both.
+        results = search_rank_dedupe(
+            hybrid, reranker, query, collections, case.get("filters") or None,
+            config, top_k, prefer_repo,
+        )
         result_metas = [r.metadata for r in results]
         search_results_map[query] = result_metas
-        all_results.append({"query": query, "results": result_metas})
+        all_results.append({
+            "query": query,
+            "classification": router.classify(query, scope=scope),
+            "hop_type": case.get("hop_type", ""),
+            "results": result_metas,
+        })
     metrics = compute_metrics(test_cases, search_results_map, k=top_k)
     save_results(all_results, Path(output))
     typer.echo(f"Evaluated {metrics['num_queries']} queries:")
     typer.echo(f"  Precision@{top_k}: {metrics[f'precision_at_{top_k}']:.3f}")
     typer.echo(f"  Recall@{top_k}: {metrics[f'recall_at_{top_k}']:.3f}")
     typer.echo(f"  MRR: {metrics['mrr']:.3f}")
-    typer.echo(f"Results saved to {output}")
+    if group_by:
+        grouped = compute_grouped_metrics(test_cases, search_results_map, key=group_by, k=top_k)
+        typer.echo(f"\nBy {group_by}:")
+        for name, m in grouped.items():
+            typer.echo(
+                f"  {name:<14} n={int(m['num_queries']):<3} "
+                f"P@{top_k}={m[f'precision_at_{top_k}']:.3f}  "
+                f"R@{top_k}={m[f'recall_at_{top_k}']:.3f}  "
+                f"MRR={m['mrr']:.3f}"
+            )
+    typer.echo(f"\nResults saved to {output}")
 
 
 @eval_app.command("compare")

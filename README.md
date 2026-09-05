@@ -264,18 +264,42 @@ devrag config get vector_store.backend
 Test retrieval quality with a JSONL file of queries and expected results:
 
 ```bash
-devrag eval run test_queries.jsonl --output results.jsonl --top-k 5
+devrag eval run evals/devrag.jsonl --output results.jsonl --top-k 5
 devrag eval compare results_v1.jsonl results_v2.jsonl
 ```
+
+`eval run` drives the same `search_rank_dedupe` pipeline as `devrag search` and
+the MCP `search()` tool, so scores reflect what users actually get.
 
 Query file format:
 
 ```jsonl
-{"query": "How does rate limiting work?", "expected_files": ["src/middleware/rate_limit.ts"]}
-{"query": "Why did we migrate to Redis?", "expected_prs": [1234, 1301]}
+{"query": "How does rate limiting work?", "expected_files": ["src/middleware/rate_limit.ts"], "hop_type": "single"}
+{"query": "Why did we migrate to Redis?", "expected_prs": [1234, 1301], "hop_type": "multi"}
+{"query": "How do the CLI and MCP server share retrieval?", "expected_files": ["devrag/cli.py", "devrag/mcp_server.py"], "hop_type": "multi", "filters": {"repo": "dev-rag"}}
 ```
 
-Metrics: precision@k, recall@k, and MRR (Mean Reciprocal Rank).
+`expected_files` are matched on whole path segments in either direction, so
+repo-relative expectations match the absolute paths the code indexer stores.
+`filters` are passed straight through to search (same keys as `devrag search`'s
+filter flags). Any label — `hop_type` above — can be broken out with
+`--group-by`:
+
+```
+By hop_type:
+  multi          n=20  P@5=0.330  R@5=0.512  MRR=0.471
+  single         n=20  P@5=0.210  R@5=0.650  MRR=0.442
+```
+
+Metrics: precision@k, recall@k, and MRR (Mean Reciprocal Rank). A bundled set
+for this repo lives in [`evals/`](evals/README.md).
+
+### Query metrics
+
+Every search from the CLI and the MCP server is recorded locally in the
+`query_metrics` SQLite table — stage timings, the collections it was routed to,
+and the intent label that routed it. Set `retrieval.log_queries: false` to turn
+it off. Nothing leaves the machine.
 
 ## Claude Code Integration
 
@@ -386,6 +410,7 @@ retrieval:
   reranker_max_length: 512      # Cross-encoder token limit; raise for longer chunks
   max_per_source: 2             # Max results kept per file/PR/issue/etc.
   repo_boost: 0.15              # Soft preference for the cwd repo (fraction of score spread; 0 = off)
+  log_queries: true             # Record searches (timings, routed collections, intent) in query_metrics
 
 code:
   chunk_max_tokens: 512

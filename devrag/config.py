@@ -44,6 +44,9 @@ class RetrievalConfig:
     rrf_k: int = 60
     max_per_source: int = 2
     repo_boost: float = 0.15  # moderate preference for the cwd repo; fraction of score spread (0 = off)
+    # Record every search into the local `query_metrics` table (timings, routed
+    # collections, intent label). Local-only; feeds `devrag eval` triage.
+    log_queries: bool = True
 
 
 @dataclass

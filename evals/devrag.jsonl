@@ -1,0 +1,40 @@
+{"query": "how does the embedder handle blank input", "expected_files": ["devrag/ingest/embedder.py"], "hop_type": "single", "filters": {"repo": "dev-rag"}}
+{"query": "where is the BM25 sparse encoder defined", "expected_files": ["devrag/ingest/sparse_encoder.py"], "hop_type": "single", "filters": {"repo": "dev-rag"}}
+{"query": "how are chunk ids generated for code entities", "expected_files": ["devrag/ingest/code_indexer.py"], "hop_type": "single", "filters": {"repo": "dev-rag"}}
+{"query": "what does resolve_verify do", "expected_files": ["devrag/utils/http.py"], "hop_type": "single", "filters": {"repo": "dev-rag"}}
+{"query": "where are query metrics stored", "expected_files": ["devrag/stores/metadata_db.py"], "hop_type": "single", "filters": {"repo": "dev-rag"}}
+{"query": "how does deduplicate_results limit results per source", "expected_files": ["devrag/retrieve/hybrid_search.py"], "hop_type": "single", "filters": {"repo": "dev-rag"}}
+{"query": "what is the default embedding model", "expected_files": ["devrag/config.py"], "hop_type": "single", "filters": {"repo": "dev-rag"}}
+{"query": "how does infer_repo match the current directory against known repos", "expected_files": ["devrag/utils/git.py"], "hop_type": "single", "filters": {"repo": "dev-rag"}}
+{"query": "where is the d cookie read from the Slack desktop app", "expected_files": ["devrag/utils/slack_auth.py"], "hop_type": "single", "filters": {"repo": "dev-rag"}}
+{"query": "how does the Jira client authenticate", "expected_files": ["devrag/utils/jira_client.py"], "hop_type": "single", "filters": {"repo": "dev-rag"}}
+{"query": "what fields does the Chunk dataclass have", "expected_files": ["devrag/types.py"], "hop_type": "single", "filters": {"repo": "dev-rag"}}
+{"query": "how are markdown documents split into sections", "expected_files": ["devrag/ingest/doc_indexer.py"], "hop_type": "single", "filters": {"repo": "dev-rag"}}
+{"query": "how does the Slack client pace its requests", "expected_files": ["devrag/utils/slack_client.py"], "hop_type": "single", "filters": {"repo": "dev-rag"}}
+{"query": "where is quantization applied to a Qdrant collection", "expected_files": ["devrag/stores/qdrant_store.py"], "hop_type": "single", "filters": {"repo": "dev-rag"}}
+{"query": "how are Terraform block names derived", "expected_files": ["devrag/ingest/code_indexer.py"], "hop_type": "single", "filters": {"repo": "dev-rag"}}
+{"query": "what forms of Retry-After header are parsed", "expected_files": ["devrag/utils/http.py"], "hop_type": "single", "filters": {"repo": "dev-rag"}}
+{"query": "how are search results formatted for output", "expected_files": ["devrag/utils/formatters.py"], "hop_type": "single", "filters": {"repo": "dev-rag"}}
+{"query": "how does the session indexer pair user prompts with assistant turns", "expected_files": ["devrag/ingest/session_indexer.py"], "hop_type": "single", "filters": {"repo": "dev-rag"}}
+{"query": "what caps how much of a chunk a doc comment may take", "expected_files": ["devrag/ingest/code_indexer.py"], "hop_type": "single", "filters": {"repo": "dev-rag"}}
+{"query": "how is a Slite page fetched as markdown", "expected_files": ["devrag/utils/slite_client.py", "devrag/ingest/slite_indexer.py"], "hop_type": "single", "filters": {"repo": "dev-rag"}}
+{"query": "how does a search query get routed, ranked and returned", "expected_files": ["devrag/retrieve/query_router.py", "devrag/retrieve/hybrid_search.py", "devrag/retrieve/reranker.py"], "hop_type": "multi", "filters": {"repo": "dev-rag"}}
+{"query": "what do I need to change to add a new language to code indexing", "expected_files": ["devrag/ingest/code_indexer.py", "tests/test_code_indexer.py"], "hop_type": "multi", "filters": {"repo": "dev-rag"}, "note": "router sends this to PRs on the 'change to' pattern; kept as-is to expose that"}
+{"query": "how does the active repo preference interact with an explicit repo filter", "expected_files": ["devrag/retrieve/hybrid_search.py", "devrag/cli.py", "devrag/mcp_server.py"], "hop_type": "multi", "filters": {"repo": "dev-rag"}}
+{"query": "how do the CLI and the MCP server share retrieval logic", "expected_files": ["devrag/cli.py", "devrag/mcp_server.py", "devrag/retrieve/hybrid_search.py"], "hop_type": "multi", "filters": {"repo": "dev-rag"}}
+{"query": "where does a custom CA bundle get applied across the outbound clients", "expected_files": ["devrag/utils/http.py", "devrag/config.py", "devrag/utils/github.py", "devrag/utils/jira_client.py"], "hop_type": "multi", "filters": {"repo": "dev-rag"}}
+{"query": "how is the retry policy for GitHub different from the other clients", "expected_files": ["devrag/utils/http.py", "devrag/utils/github.py"], "hop_type": "multi", "filters": {"repo": "dev-rag"}}
+{"query": "what happens end to end when I index a repository", "expected_files": ["devrag/cli.py", "devrag/ingest/code_indexer.py", "devrag/ingest/doc_indexer.py"], "hop_type": "multi", "filters": {"repo": "dev-rag"}}
+{"query": "how does incremental indexing decide to skip a file", "expected_files": ["devrag/ingest/code_indexer.py", "devrag/stores/metadata_db.py"], "hop_type": "multi", "filters": {"repo": "dev-rag"}}
+{"query": "how do code chunks and doc chunks avoid deleting each other's rows", "expected_files": ["devrag/ingest/code_indexer.py", "devrag/ingest/doc_indexer.py"], "hop_type": "multi", "filters": {"repo": "dev-rag"}}
+{"query": "how is a Slack session credential obtained and then used to sync", "expected_files": ["devrag/utils/slack_auth.py", "devrag/utils/slack_client.py", "devrag/ingest/slack_indexer.py"], "hop_type": "multi", "filters": {"repo": "dev-rag"}}
+{"query": "how does index refresh differ from a full reindex", "expected_files": ["devrag/ingest/refresh.py", "devrag/cli.py"], "hop_type": "multi", "filters": {"repo": "dev-rag"}}
+{"query": "what makes re-syncing Slack idempotent", "expected_files": ["devrag/ingest/slack_indexer.py", "devrag/stores/metadata_db.py"], "hop_type": "multi", "filters": {"repo": "dev-rag"}}
+{"query": "how are truncation limits enforced from chunk creation through embedding", "expected_files": ["devrag/ingest/pr_indexer.py", "devrag/ingest/embedder.py", "devrag/config.py"], "hop_type": "multi", "filters": {"repo": "dev-rag"}}
+{"query": "how do metadata filters reach both the dense and the sparse leg", "expected_files": ["devrag/stores/qdrant_store.py", "devrag/retrieve/hybrid_search.py"], "hop_type": "multi", "filters": {"repo": "dev-rag"}}
+{"query": "how is a doc comment found and attached to the entity below it", "expected_files": ["devrag/ingest/code_indexer.py", "devrag/config.py"], "hop_type": "multi", "filters": {"repo": "dev-rag"}}
+{"query": "how does gitignore handling apply to both code and docs", "expected_files": ["devrag/utils/git.py", "devrag/ingest/code_indexer.py", "devrag/ingest/doc_indexer.py"], "hop_type": "multi", "filters": {"repo": "dev-rag"}}
+{"query": "how does a pull request get from GitHub into the vector store", "expected_files": ["devrag/utils/github.py", "devrag/ingest/pr_indexer.py", "devrag/stores/qdrant_store.py"], "hop_type": "multi", "filters": {"repo": "dev-rag"}}
+{"query": "what determines which collections a query hits", "expected_files": ["devrag/retrieve/query_router.py", "devrag/cli.py", "devrag/mcp_server.py"], "hop_type": "multi", "filters": {"repo": "dev-rag"}}
+{"query": "how are per-file failures isolated so one bad file cannot abort a run", "expected_files": ["devrag/ingest/code_indexer.py", "devrag/ingest/doc_indexer.py"], "hop_type": "multi", "filters": {"repo": "dev-rag"}}
+{"query": "how is retrieval quality measured and compared between runs", "expected_files": ["devrag/eval.py", "devrag/cli.py"], "hop_type": "multi", "filters": {"repo": "dev-rag"}}

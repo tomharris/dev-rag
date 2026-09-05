@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 
@@ -66,19 +67,32 @@ def apply_repo_preference(
     )
 
 
-def search_rank_dedupe(hybrid, reranker, query, collections, where, config, final_k, prefer_repo=""):
+def search_rank_dedupe(hybrid, reranker, query, collections, where, config, final_k,
+                       prefer_repo="", timings=None):
     """Run the full retrieval pipeline: hybrid search, rerank, dedupe, truncate.
 
     Dedupe runs on the *full ranked pool* before the final-k slice, so a query
     whose top hits share a source still returns up to final_k distinct sources.
+
+    ``timings`` is an optional dict filled in place with millisecond stage
+    timings (see ``HybridSearch.search`` for the retrieval-side keys, plus
+    ``rerank_ms`` and ``total_ms``). It is an out-param rather than a second
+    return value so every existing caller keeps working unchanged.
     """
-    candidates = hybrid.search(query, top_k=config.retrieval.top_k, collections=collections, where=where)
+    started = time.perf_counter()
+    candidates = hybrid.search(query, top_k=config.retrieval.top_k, collections=collections,
+                               where=where, timings=timings)
+    rerank_started = time.perf_counter()
     if reranker and candidates:
         ranked = reranker.rerank(query, candidates, top_k=len(candidates))
     else:
         ranked = candidates
+    if timings is not None:
+        timings["rerank_ms"] = (time.perf_counter() - rerank_started) * 1000
     ranked = apply_repo_preference(ranked, prefer_repo, config.retrieval.repo_boost)
     deduped = deduplicate_results(ranked, max_per_source=config.retrieval.max_per_source)
+    if timings is not None:
+        timings["total_ms"] = (time.perf_counter() - started) * 1000
     return deduped[:final_k]
 
 
@@ -89,11 +103,28 @@ class HybridSearch:
         self.sparse_encoder = sparse_encoder
         self.collection = collection
 
-    def search(self, query: str, top_k: int = 20, collections: list[str] | None = None, where: dict | None = None) -> list[SearchResult]:
+    def search(self, query: str, top_k: int = 20, collections: list[str] | None = None,
+               where: dict | None = None, timings: dict | None = None) -> list[SearchResult]:
+        """Hybrid-search ``collections``, returning the top_k fused results.
+
+        ``timings``, if given, is filled in place with:
+          - ``embed_ms``  — dense query embedding (Ollama round trip)
+          - ``sparse_ms`` — BM25 query encoding (local FastEmbed)
+          - ``vector_ms`` — the Qdrant ``query_points`` calls
+
+        There is no separable "BM25 search" time: Qdrant prefetches both legs and
+        fuses them server-side inside a single call, so ``vector_ms`` covers both.
+        """
         if collections is None:
             collections = [self.collection]
+        embed_started = time.perf_counter()
         dense = self.embedder.embed_query(query)
+        sparse_started = time.perf_counter()
         sparse = self.sparse_encoder.encode_query(query)
+        query_started = time.perf_counter()
+        if timings is not None:
+            timings["embed_ms"] = (sparse_started - embed_started) * 1000
+            timings["sparse_ms"] = (query_started - sparse_started) * 1000
 
         def _query_one(coll: str):
             return self.vector_store.hybrid_query(
@@ -109,6 +140,9 @@ class HybridSearch:
         else:
             with ThreadPoolExecutor(max_workers=min(len(collections), 8)) as pool:
                 per_collection = list(pool.map(_query_one, collections))
+
+        if timings is not None:
+            timings["vector_ms"] = (time.perf_counter() - query_started) * 1000
 
         all_results: list[SearchResult] = []
         for hits in per_collection:

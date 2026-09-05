@@ -22,14 +22,51 @@ def test_cli_search_help():
     assert "scope" in result.stdout.lower()
 
 
+@patch("devrag.stores.metadata_db.MetadataDB")
 @patch("devrag.cli._get_search_components")
-def test_cli_search(mock_get):
+def test_cli_search(mock_get, mock_db):
     mock_hybrid = MagicMock()
     mock_hybrid.search.return_value = []
     mock_reranker = MagicMock()
     mock_get.return_value = (mock_hybrid, mock_reranker, MagicMock())
     result = runner.invoke(app, ["search", "how does auth work"])
     assert result.exit_code == 0
+
+
+@patch("devrag.stores.metadata_db.MetadataDB")
+@patch("devrag.cli._get_search_components")
+def test_cli_search_logs_a_query_metric(mock_get, mock_db):
+    """The CLI must record the search, tagged with the routed intent.
+
+    MetadataDB is patched in every CLI search test on purpose: it points at the
+    user's real ~/.local/share/devrag/metadata.db, so an unpatched run writes
+    junk rows into their live query_metrics table.
+    """
+    mock_hybrid = MagicMock()
+    mock_hybrid.search.return_value = []
+    config = MagicMock()
+    config.retrieval.log_queries = True
+    mock_get.return_value = (mock_hybrid, MagicMock(), config)
+    result = runner.invoke(app, ["search", "how does auth work"])
+    assert result.exit_code == 0
+    kwargs = mock_db.return_value.log_query_metric.call_args.kwargs
+    assert kwargs["query"] == "how does auth work"
+    assert kwargs["classification"] == "code"
+    assert kwargs["collections"] == ["code_chunks"]
+
+
+@patch("devrag.stores.metadata_db.MetadataDB")
+@patch("devrag.cli._get_search_components")
+def test_cli_search_respects_log_queries_off(mock_get, mock_db):
+    mock_hybrid = MagicMock()
+    mock_hybrid.search.return_value = []
+    config = MagicMock()
+    config.retrieval.log_queries = False
+    config.retrieval.repo_boost = 0
+    mock_get.return_value = (mock_hybrid, MagicMock(), config)
+    result = runner.invoke(app, ["search", "how does auth work"])
+    assert result.exit_code == 0
+    mock_db.return_value.log_query_metric.assert_not_called()
 
 
 def test_cli_status_help():
