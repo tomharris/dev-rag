@@ -6,3 +6,7 @@ dist/
 build/
 .pytest_cache/
 .claude/*.local.json
+
+# Eval run outputs (machine-specific absolute paths)
+evals/runs/
+results.jsonl

@@ -17,6 +17,7 @@ from devrag.ingest.slack_indexer import SlackIndexer
 from devrag.ingest.slite_indexer import SliteIndexer
 from devrag.ingest.sparse_encoder import BM25SparseEncoder
 from devrag.retrieve.hybrid_search import HybridSearch, search_rank_dedupe
+from devrag.retrieve.metrics import log_search
 from devrag.retrieve.query_router import QueryRouter
 from devrag.retrieve.reranker import Reranker
 from devrag.stores.qdrant_store import QdrantStore
@@ -175,7 +176,12 @@ def search(
     prefer_repo = ""
     if not repo and config.retrieval.repo_boost:
         prefer_repo = infer_repo(Path.cwd(), _get_metadata_db().get_all_repos())
-    results = search_rank_dedupe(hybrid, reranker, query, collections, where, config, final_k, prefer_repo)
+    timings: dict = {}
+    results = search_rank_dedupe(hybrid, reranker, query, collections, where, config, final_k,
+                                 prefer_repo, timings=timings)
+    if config.retrieval.log_queries:
+        log_search(_get_metadata_db(), query, collections, router.classify(query, scope=scope),
+                   timings, len(results))
     return format_search_results(results)
 
 

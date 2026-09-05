@@ -240,3 +240,48 @@ def test_search_rank_dedupe_without_reranker_dedupes_then_truncates():
         hybrid, None, "q", ["code_chunks"], None, _config(max_per_source=1), final_k=2
     )
     assert [r.chunk_id for r in results] == ["c1", "c3"]
+
+
+def test_search_rank_dedupe_fills_timings():
+    hybrid = MagicMock()
+    hybrid.search.return_value = [
+        SearchResult(chunk_id="c1", text="a", score=0.9, metadata={"file_path": "foo.py"}),
+    ]
+
+    def _fake_search(query, top_k, collections, where, timings=None):
+        if timings is not None:
+            timings.update({"embed_ms": 1.0, "sparse_ms": 2.0, "vector_ms": 3.0})
+        return hybrid.search.return_value
+
+    hybrid.search.side_effect = _fake_search
+    timings: dict = {}
+    search_rank_dedupe(hybrid, None, "q", ["code_chunks"], None, _config(), final_k=5,
+                       timings=timings)
+    assert timings["embed_ms"] == 1.0
+    assert "rerank_ms" in timings and "total_ms" in timings
+    assert timings["total_ms"] >= 0.0
+
+
+def test_search_rank_dedupe_without_timings_is_unchanged():
+    """timings is an out-param; omitting it must not alter behaviour."""
+    hybrid = MagicMock()
+    hybrid.search.return_value = [
+        SearchResult(chunk_id="c1", text="a", score=0.9, metadata={"file_path": "foo.py"}),
+    ]
+    results = search_rank_dedupe(hybrid, None, "q", ["code_chunks"], None, _config(), final_k=5)
+    assert [r.chunk_id for r in results] == ["c1"]
+    assert hybrid.search.call_args.kwargs["timings"] is None
+
+
+def test_hybrid_search_records_stage_timings():
+    mock_store = MagicMock()
+    mock_store.hybrid_query.return_value = QueryResult(
+        ids=["c1"], documents=["x"], metadatas=[{"file_path": "a.py"}], distances=[0.9],
+    )
+    mock_embedder = MagicMock()
+    mock_embedder.embed_query.return_value = [0.1] * 768
+    hs = HybridSearch(mock_store, mock_embedder, _mock_sparse_encoder())
+    timings: dict = {}
+    hs.search("q", top_k=5, timings=timings)
+    assert set(timings) == {"embed_ms", "sparse_ms", "vector_ms"}
+    assert all(v >= 0.0 for v in timings.values())
