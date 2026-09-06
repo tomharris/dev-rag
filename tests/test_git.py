@@ -115,3 +115,35 @@ def test_infer_repo_returns_empty_when_no_match():
 def test_infer_repo_prefers_most_specific_nested_repo():
     repos = [("outer", "/home/u/Projects"), ("inner", "/home/u/Projects/inner")]
     assert infer_repo(Path("/home/u/Projects/inner/src"), repos) == "inner"
+
+
+def test_relative_to_repo_strips_the_repo_root(tmp_path):
+    from devrag.utils.git import relative_to_repo
+    repo = tmp_path / "myrepo"
+    (repo / "src").mkdir(parents=True)
+    f = repo / "src" / "main.py"
+    f.write_text("x = 1\n")
+    assert relative_to_repo(f, repo) == "src/main.py"
+
+
+def test_relative_to_repo_without_a_root_keeps_the_absolute_path(tmp_path):
+    """A standalone doc directory has no repo root to be relative to."""
+    from devrag.utils.git import relative_to_repo
+    f = tmp_path / "notes.md"
+    f.write_text("hi")
+    assert relative_to_repo(f, None) == str(f)
+
+
+def test_relative_to_repo_falls_back_when_outside_the_repo(tmp_path):
+    from devrag.utils.git import relative_to_repo
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    outside = tmp_path / "elsewhere.py"
+    outside.write_text("x = 1\n")
+    assert relative_to_repo(outside, repo) == str(outside)
+
+
+def test_bare_repo_name():
+    from devrag.utils.github import bare_repo_name
+    assert bare_repo_name("acme/backend") == "backend"
+    assert bare_repo_name("backend") == "backend"

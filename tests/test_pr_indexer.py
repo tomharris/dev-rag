@@ -30,7 +30,7 @@ def test_chunk_pr_creates_description_chunk():
     assert "Adds authentication" in desc_chunks[0].text
     assert desc_chunks[0].metadata["pr_number"] == 1
     assert desc_chunks[0].metadata["pr_author"] == "alice"
-    assert desc_chunks[0].metadata["repo"] == "acme/backend"
+    assert desc_chunks[0].metadata["repo"] == "backend"  # bare name, shared with code chunks
 
 
 def test_chunk_pr_creates_diff_chunks():
@@ -53,7 +53,7 @@ def test_chunk_pr_creates_comment_chunks():
 def test_chunk_pr_metadata_fields():
     chunks = chunk_pr(_make_pr(labels=["security", "breaking-change"]), [_make_file()], [], repo="acme/backend")
     for chunk in chunks:
-        assert chunk.metadata["repo"] == "acme/backend"
+        assert chunk.metadata["repo"] == "backend"  # bare name, shared with code chunks
         assert chunk.metadata["pr_number"] == 1
         assert chunk.metadata["pr_title"] == "Add auth"
         assert chunk.metadata["pr_state"] == "closed"
@@ -136,3 +136,11 @@ def test_pr_indexer_since_days_overrides_cursor(tmp_dir, sparse_encoder, frozen_
     since_passed = call_kwargs.get("since")
     assert since_passed is not None
     assert since_passed < "2026-03-15T10:00:00Z"
+
+
+def test_chunk_pr_keeps_the_full_slug_alongside_the_bare_name():
+    """`repo` must match code chunks so --repo works across both; the GitHub
+    slug is still needed to build URLs, so it is kept as `repo_full`."""
+    chunks = chunk_pr(_make_pr(), [], [], repo="acme/backend")
+    assert chunks[0].metadata["repo"] == "backend"
+    assert chunks[0].metadata["repo_full"] == "acme/backend"

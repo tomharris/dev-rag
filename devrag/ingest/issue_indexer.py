@@ -3,7 +3,9 @@ import hashlib
 import logging
 from datetime import datetime, timedelta, timezone
 from devrag.types import Chunk, IssueSyncStats
-from devrag.utils.github import GitHubClient
+from devrag.utils.github import GitHubClient, bare_repo_name
+
+from devrag.ingest.migrations import backfill_bare_repo_name
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +20,10 @@ def _make_issue_chunk_id(repo: str, issue_number: int, chunk_type: str, index: i
 def _issue_base_metadata(issue: dict, repo: str) -> dict:
     labels = ",".join(l["name"] for l in issue.get("labels", []))
     return {
-        "repo": repo,
+        # Bare name so issues share one `repo` value with code and PRs; see
+        # `_pr_base_metadata` in pr_indexer.py.
+        "repo": bare_repo_name(repo),
+        "repo_full": repo,
         "issue_number": issue["number"],
         "issue_title": issue["title"],
         "issue_state": issue["state"],
@@ -86,6 +91,8 @@ class IssueIndexer:
 
     def sync(self, repo: str, since_days: int = 90) -> IssueSyncStats:
         stats = IssueSyncStats()
+        # Idempotent; see devrag/ingest/migrations.py.
+        backfill_bare_repo_name(self.vector_store, ["issue_descriptions", "issue_discussions"], repo)
         cursor = self.metadata_db.get_issue_sync_cursor(repo)
         if cursor:
             since_date = cursor

@@ -201,6 +201,23 @@ class QdrantStore:
             metadatas.append(payload)
         return QueryResult(ids=out_ids, documents=documents, metadatas=metadatas, distances=[])
 
+    def set_payload(self, collection: str, where: dict, payload: dict) -> int:
+        """Overwrite *payload* fields on every point matching *where*.
+
+        Used to rewrite a metadata field on already-indexed chunks without
+        re-embedding them. Returns the number of points matched (0 if the
+        collection does not exist yet).
+        """
+        if not self._client.collection_exists(collection):
+            return 0
+        query_filter = self._build_filter(where)
+        matched = self._client.count(collection, count_filter=query_filter, exact=True).count
+        if matched:
+            self._client.set_payload(
+                collection_name=collection, payload=payload, points=query_filter, wait=True
+            )
+        return matched
+
     def delete(self, collection: str, ids: list[str]) -> None:
         if not self._client.collection_exists(collection):
             return

@@ -391,7 +391,7 @@ def test_code_indexer_isolates_failing_file(tmp_dir, indexer_deps):
 
     assert stats.files_failed == 1
     assert stats.files_indexed >= 1  # good.py still indexed
-    assert meta.get_file_hash(str(repo / "bad.py"), repo=repo.name) is None  # retried next run
+    assert meta.get_file_hash("bad.py", repo=repo.name) is None  # retried next run
 
 
 def test_extract_chunks_skips_empty_text_nodes(tmp_dir):
@@ -610,19 +610,19 @@ def test_code_and_docs_coexist_without_cross_deletion(tmp_dir, indexer_deps):
     code.index_repo(repo, repo_name="r")
     docs.index_repo_docs(repo, repo_name="r")
 
-    readme_chunks = meta.get_chunks_for_file(str(repo / "README.md"), repo="r")
-    main_chunks = meta.get_chunks_for_file(str(repo / "main.py"), repo="r")
+    readme_chunks = meta.get_chunks_for_file("README.md", repo="r")
+    main_chunks = meta.get_chunks_for_file("main.py", repo="r")
     assert readme_chunks and main_chunks
 
     # Re-running the code indexer must NOT see README.md as a removed code file.
     stats = code.index_repo(repo, incremental=True, repo_name="r")
     assert stats.files_removed == 0
-    assert meta.get_chunks_for_file(str(repo / "README.md"), repo="r") == readme_chunks
+    assert meta.get_chunks_for_file("README.md", repo="r") == readme_chunks
 
     # Re-running the doc indexer must NOT see main.py as a removed doc file.
     doc_stats = docs.index_repo_docs(repo, repo_name="r", incremental=True)
     assert doc_stats.files_removed == 0
-    assert meta.get_chunks_for_file(str(repo / "main.py"), repo="r") == main_chunks
+    assert meta.get_chunks_for_file("main.py", repo="r") == main_chunks
 
 
 # --- Leading doc-comment capture ---
@@ -901,3 +901,44 @@ def test_file_header_chunk_kept_when_license_is_incidental(tmp_dir):
     header = [c for c in chunks if c.metadata["entity_type"] == "module_doc"]
     assert len(header) == 1
     assert "Chromium LevelDB reader" in header[0].text
+
+
+def test_index_repo_stores_repo_relative_paths(tmp_dir, indexer_deps):
+    """Chunk file_paths must match what GitHub reports in a PR diff.
+
+    Absolute paths made the PR-to-code join impossible and leaked the indexing
+    machine's home directory into every payload.
+    """
+    store, meta, embedder, sparse_encoder = indexer_deps
+    repo = tmp_dir / "repo"
+    (repo / "src").mkdir(parents=True)
+    (repo / "src" / "main.py").write_text("def hello():\n    return 'world'\n")
+
+    CodeIndexer(store, meta, embedder, sparse_encoder).index_repo(repo, repo_name="r")
+
+    indexed = meta.get_indexed_files_for_repo("r")
+    assert indexed == ["src/main.py"]
+    assert meta.get_chunks_for_file("src/main.py", repo="r")
+
+
+def test_reindex_after_path_change_removes_absolute_path_chunks(tmp_dir, indexer_deps):
+    """A repo indexed under the old absolute-path scheme self-heals on the next run.
+
+    The removed-file pass sees every old absolute path as missing, deletes its
+    now-orphaned chunks, and the file is re-indexed under its relative path — so
+    no manual reindex is needed and no orphans are left behind.
+    """
+    store, meta, embedder, sparse_encoder = indexer_deps
+    repo = tmp_dir / "repo"
+    repo.mkdir()
+    (repo / "main.py").write_text("def hello():\n    return 'world'\n")
+
+    # Simulate a pre-migration row: same file, absolute path, a stale chunk id.
+    meta.set_file_hash(str(repo / "main.py"), "deadbeef", repo="r")
+    meta.set_chunk_source("stale-chunk-id", str(repo / "main.py"), 1, 2, repo="r")
+
+    stats = CodeIndexer(store, meta, embedder, sparse_encoder).index_repo(repo, repo_name="r")
+
+    assert stats.files_removed == 1
+    assert meta.get_chunks_for_file(str(repo / "main.py"), repo="r") == []
+    assert meta.get_indexed_files_for_repo("r") == ["main.py"]

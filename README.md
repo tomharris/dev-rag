@@ -110,6 +110,23 @@ devrag search "incident" --channel C0123ABCD   # Slack channel id
 
 The query router automatically classifies intent and targets relevant collections. "Why did we switch to Redis?" routes to PR history; "is there a bug with login?" routes to issues and Jira tickets; "what sprint is auth in?" routes to Jira; "what does our wiki say about deploys?" routes to Slite pages and documents; "how does the auth middleware work?" routes to code.
 
+### Paths and repo names in results
+
+Code and repo-doc chunks store a **repo-relative** path (`devrag/eval.py`), the
+same form GitHub uses in a PR diff — so `--file-path internal/ingest/roster.go`
+matches the code *and* the PRs that touched it, and results render as
+`repo/path`. Docs indexed from a standalone directory with `index docs` keep an
+absolute path, since there is no repo root to be relative to.
+
+GitHub chunks store the bare repo name in `repo` (with the `owner/name` slug
+kept as `repo_full`), so `--repo dev-rag` matches code, docs, PRs and issues
+alike.
+
+Upgrading from an older index needs no manual `reindex`: the next
+`devrag index repo` / `index refresh` per repo removes the old absolute-path
+chunks and rewrites them, and PR/issue payloads are migrated in place at the
+start of the next `index prs` / `index issues` run.
+
 ### Indexing
 
 ```bash
@@ -280,7 +297,7 @@ Query file format:
 ```
 
 `expected_files` are matched on whole path segments in either direction, so
-repo-relative expectations match the absolute paths the code indexer stores.
+repo-relative expectations match regardless of how a chunk's path is stored.
 `filters` are passed straight through to search (same keys as `devrag search`'s
 filter flags). Any label — `hop_type` above — can be broken out with
 `--group-by`:

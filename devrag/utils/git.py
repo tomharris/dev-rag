@@ -24,6 +24,27 @@ def infer_repo(cwd: Path, repos: list[tuple[str, str]]) -> str:
     return best_name
 
 
+def relative_to_repo(file_path: Path, repo_path: Path | None) -> str:
+    """Return *file_path* as a repo-relative POSIX string.
+
+    Code and doc chunks store this rather than an absolute path so a chunk's
+    `file_path` is the same string GitHub uses in a PR diff — which is what makes
+    a PR joinable to the code it touched, and what makes `search --file-path`
+    match both sources at once. Absolute paths also leaked the indexing machine's
+    home directory into every payload.
+
+    Falls back to `str(file_path)` when *repo_path* is None (a standalone doc
+    directory, which has no repo root to be relative to) or when the file is
+    somehow outside the repo.
+    """
+    if repo_path is None:
+        return str(file_path)
+    try:
+        return file_path.resolve().relative_to(repo_path.resolve()).as_posix()
+    except ValueError:
+        return str(file_path)
+
+
 def discover_files(
     repo_path: Path,
     exclude_patterns: list[str],

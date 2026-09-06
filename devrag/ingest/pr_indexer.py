@@ -3,7 +3,9 @@ import hashlib
 import logging
 from datetime import datetime, timedelta, timezone
 from devrag.types import Chunk, PRSyncStats
-from devrag.utils.github import GitHubClient, parse_diff_hunks
+from devrag.utils.github import GitHubClient, bare_repo_name, parse_diff_hunks
+
+from devrag.ingest.migrations import backfill_bare_repo_name
 
 logger = logging.getLogger(__name__)
 
@@ -16,8 +18,16 @@ def _make_pr_chunk_id(repo: str, pr_number: int, chunk_type: str, index: int) ->
 
 
 def _pr_base_metadata(pr: dict, repo: str) -> dict:
+    """Chunk metadata for one PR. *repo* is the ``owner/name`` slug.
+
+    ``repo`` in the payload is the **bare name**, matching what code chunks and
+    ``search --repo`` use, so a PR and the code it touched share one repo value.
+    Without this, `--repo dev-rag` silently excluded every PR, and PR chunks
+    could never receive the active-repo boost. The slug is kept as ``repo_full``.
+    """
     labels = ",".join(l["name"] for l in pr.get("labels", []))
-    return {"repo": repo, "pr_number": pr["number"], "pr_title": pr["title"],
+    return {"repo": bare_repo_name(repo), "repo_full": repo,
+            "pr_number": pr["number"], "pr_title": pr["title"],
             "pr_state": pr["state"], "pr_author": pr["user"]["login"],
             "pr_labels": labels, "merged_at": pr.get("merged_at") or ""}
 
@@ -91,6 +101,8 @@ class PRIndexer:
 
     def sync(self, repo: str, since_days: int | None = None) -> PRSyncStats:
         stats = PRSyncStats()
+        # Idempotent; see devrag/ingest/migrations.py.
+        backfill_bare_repo_name(self.vector_store, ["pr_diffs", "pr_discussions"], repo)
         if since_days is not None:
             since_date = (datetime.now(timezone.utc) - timedelta(days=since_days)).isoformat()
         else:
