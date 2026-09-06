@@ -51,15 +51,22 @@ class RetrievalConfig:
     # touched a top code hit, and the current code for a top PR hit, into the
     # candidate pool before reranking. Joined on (repo, file_path).
     #
-    # Default off, from measurement: it is a large win on "why did X change"
-    # queries (R@5 0.688 -> 0.953) and a loss on "how does X work" queries
-    # (R@5 0.669 -> 0.544), because expanded chunks consume final_k slots. No
-    # setting won both — see evals/README.md for the full matrix. Turn it on
-    # globally for a history-heavy workload, or per query with `search --expand`.
-    expand_related: bool = False
+    # "auto" (default) spends result slots on PR history only for queries that
+    # ask about history (`QueryRouter.wants_history`); "always" expands every
+    # query; "off" disables it. Expanding unconditionally is a large win on
+    # "why did X change" (R@5 0.688 -> 0.953) and a loss on "how does X work"
+    # (R@5 0.669 -> 0.544), because expanded chunks consume final_k slots —
+    # "auto" is what separates the two. See evals/README.md for the matrix.
+    expand_related: str = "auto"
     expand_top_n: int = 5      # how many top candidates to expand from
     expand_per_anchor: int = 2  # max related chunks per anchor
     expand_max_total: int = 10  # hard cap on added candidates per query
+    # Slot budget: at most this many expanded chunks may rank *ahead* of results
+    # that were actually retrieved; the rest are demoted behind them (not
+    # dropped — an unfilled slot is worse than related context). Bounds the
+    # damage when the history signal misfires on an ambiguously-worded query;
+    # the failure mode is always slot competition.
+    expand_max_results: int = 2
 
 
 @dataclass

@@ -323,12 +323,13 @@ devrag search "why did we throttle Slack web API calls" --expand
 ### 3. [PR #61] fix: throttle and back off Slack web-API calls to avoid 429s — …/slack_client.py
 ```
 
-It is **off by default**, because measurement showed no setting that helps both
-query shapes: on "why did X change" questions it lifts R@5 from 0.688 to 0.953
-with no regressions, but on "how does X work" questions it costs recall
-(0.669 → 0.544), since pulled-in chunks consume result slots. Turn it on per
-query with `--expand`, or globally with `retrieval.expand_related: true`. The
-full matrix is in [`evals/README.md`](evals/README.md).
+By default (`retrieval.expand_related: auto`) this happens **automatically for
+questions that ask about history** — "why did we…", "when did we…", "why is X
+like this" — and not for "how does X work", where pulled-in chunks would crowd
+out the implementation. Measured, that is the full benefit at no cost: identical
+to off on code questions, and R@5 0.688 → 0.953 on history ones. `--expand`
+forces it on for a single query; `expand_related: always` / `off` set it
+globally. Full matrix in [`evals/README.md`](evals/README.md).
 
 Expanded chunks are always shown *below* the result that pulled them in, and an
 explicit `--scope` or a source-pinning filter (`--pr-number`, `--chunk-type`)
@@ -451,10 +452,11 @@ retrieval:
   max_per_source: 2             # Max results kept per file/PR/issue/etc.
   repo_boost: 0.15              # Soft preference for the cwd repo (fraction of score spread; 0 = off)
   log_queries: true             # Record searches (timings, routed collections, intent) in query_metrics
-  expand_related: false         # Follow the file-path edge to related PRs/code (see above)
+  expand_related: auto          # auto (history questions only) | always | off
   expand_top_n: 5               # How many top candidates to expand from
   expand_per_anchor: 2          # Max related chunks pulled in per candidate
   expand_max_total: 10          # Hard cap on added candidates per query
+  expand_max_results: 2         # Max expanded chunks ranking ahead of real results
 
 code:
   chunk_max_tokens: 512

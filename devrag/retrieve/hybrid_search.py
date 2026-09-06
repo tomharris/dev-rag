@@ -5,6 +5,7 @@ from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 
 from devrag.retrieve.expansion import expand_related, interleave_after_anchors
+from devrag.retrieve.query_router import QueryRouter
 from devrag.types import SearchResult
 
 
@@ -81,6 +82,40 @@ def _filter_pins_a_source(where: dict | None) -> bool:
     return bool(where) and bool(_PINNING_FILTER_KEYS & set(where))
 
 
+def _should_expand(config, query: str, expand: bool | None) -> bool:
+    """Resolve the expansion decision: explicit override, else the config mode."""
+    if expand is not None:
+        return expand
+    mode = str(config.retrieval.expand_related).lower()
+    if mode in ("always", "true"):
+        return True
+    if mode == "auto":
+        return QueryRouter().wants_history(query)
+    return False
+
+
+def _apply_slot_budget(results, max_results: int):
+    """Demote expanded chunks beyond *max_results* behind every real result.
+
+    The measured failure mode is expanded chunks taking `final_k` slots from
+    results that were actually retrieved, so the budget caps how many may hold a
+    position *ahead* of real results. Excess ones are moved behind them rather
+    than deleted: if slots remain unfilled, related context still beats nothing.
+    Order is otherwise preserved, so a promoted chunk stays under its anchor.
+    """
+    if max_results is None or max_results < 0:
+        return results
+    kept, dropped, taken = [], [], 0
+    for r in results:
+        if "expanded_from" in r.metadata:
+            if taken >= max_results:
+                dropped.append(r)
+                continue
+            taken += 1
+        kept.append(r)
+    return kept + dropped
+
+
 def search_rank_dedupe(hybrid, reranker, query, collections, where, config, final_k,
                        prefer_repo="", timings=None, expand=None):
     """Run the full retrieval pipeline: hybrid search, rerank, dedupe, truncate.
@@ -94,12 +129,12 @@ def search_rank_dedupe(hybrid, reranker, query, collections, where, config, fina
     return value so every existing caller keeps working unchanged.
 
     ``expand`` decides related-chunk expansion: None follows
-    ``config.retrieval.expand_related``, and an explicit bool overrides it — that
-    is how ``search --expand`` opts in per query while the config default stays
-    off. Callers also fold in ``scope == "all"``: an explicit ``--scope code``
-    means "search code only", and expansion crosses collections by design, so
-    honouring the scope means not expanding. See ``_filter_pins_a_source`` for
-    the filter-side equivalent.
+    ``config.retrieval.expand_related`` (``"auto"`` spends slots on history only
+    for queries that ask about history), and an explicit bool overrides it —
+    that is how ``search --expand`` forces it on for one query. Callers also fold
+    in ``scope == "all"``: an explicit ``--scope code`` means "search code only",
+    and expansion crosses collections by design, so honouring the scope means not
+    expanding. See ``_filter_pins_a_source`` for the filter-side equivalent.
     """
     started = time.perf_counter()
     candidates = hybrid.search(query, top_k=config.retrieval.top_k, collections=collections,
@@ -107,7 +142,7 @@ def search_rank_dedupe(hybrid, reranker, query, collections, where, config, fina
     # One hop over the file-path edge, before reranking, so pulled-in chunks
     # compete on merit instead of being appended as unranked extras. Skipped
     # when the caller pinned a filter that expansion would quietly widen.
-    want_expand = config.retrieval.expand_related if expand is None else expand
+    want_expand = _should_expand(config, query, expand)
     if want_expand and not _filter_pins_a_source(where):
         expand_started = time.perf_counter()
         extra = expand_related(
@@ -135,6 +170,10 @@ def search_rank_dedupe(hybrid, reranker, query, collections, where, config, fina
         [r for r in ranked if "expanded_from" in r.metadata],
     )
     deduped = deduplicate_results(ranked, max_per_source=config.retrieval.max_per_source)
+    # Budget applied before the final slice, so a capped-out expanded chunk frees
+    # its slot for a real result rather than just vanishing.
+    if any("expanded_from" in r.metadata for r in deduped):
+        deduped = _apply_slot_budget(deduped, config.retrieval.expand_max_results)
     if timings is not None:
         timings["total_ms"] = (time.perf_counter() - started) * 1000
     return deduped[:final_k]

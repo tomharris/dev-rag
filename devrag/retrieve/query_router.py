@@ -77,6 +77,18 @@ _USAGE_PATTERNS = [
 # `scope=` still narrows to one source. Session is the exception — a question
 # about a past conversation is not answered by code.
 #
+# Whether a query is asking about *history* ("why did we…", "why is X like this")
+# rather than current behaviour. Deliberately separate from the intent table and
+# order-independent: intent is first-match-wins, so "why did we throttle Slack
+# web API calls" is labelled `slack` and never reaches the `pr` rule — yet it is
+# plainly a history question. A bare `\bwhy\b` is what closes the gap; on the
+# eval sets this scores 16/16 on history questions with 1/40 false positives on
+# code questions, and that one ("what do I need to change to add a new
+# language") already routes as `pr`.
+_HISTORY_PATTERNS = _PR_PATTERNS + [r"\bwhy\b"]
+_COMPILED_HISTORY = [re.compile(p) for p in _HISTORY_PATTERNS]
+
+
 # Ordered intent table. `route` and `classify` walk this same list, so the
 # collections a query is sent to and the label it is logged under can never
 # disagree. Order is significant — it reproduces the original if/elif chain
@@ -133,6 +145,15 @@ class QueryRouter:
             return f"scope:{scope}"
         name, _ = self._match(query)
         return name
+
+    def wants_history(self, query: str) -> bool:
+        """True when the query asks why/when something changed.
+
+        Used to decide whether related-chunk expansion should spend result slots
+        on PR history. See `_HISTORY_PATTERNS` for why this is not `classify()`.
+        """
+        q = query.lower()
+        return any(p.search(q) for p in _COMPILED_HISTORY)
 
     def _match(self, query: str) -> tuple[str, list[str]]:
         q = query.lower()
