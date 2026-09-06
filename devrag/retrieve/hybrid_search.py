@@ -4,6 +4,7 @@ import time
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 
+from devrag.retrieve.expansion import expand_related, interleave_after_anchors
 from devrag.types import SearchResult
 
 
@@ -67,8 +68,21 @@ def apply_repo_preference(
     )
 
 
+# Filters that name one specific source. Expansion crosses collections by
+# design, so honouring one of these means not expanding at all: a user who asked
+# for PR #12, or for one chunk_type, has said what they want.
+_PINNING_FILTER_KEYS = frozenset({
+    "chunk_type", "pr_number", "issue_number", "ticket_key", "page_id",
+    "session_id", "channel_id",
+})
+
+
+def _filter_pins_a_source(where: dict | None) -> bool:
+    return bool(where) and bool(_PINNING_FILTER_KEYS & set(where))
+
+
 def search_rank_dedupe(hybrid, reranker, query, collections, where, config, final_k,
-                       prefer_repo="", timings=None):
+                       prefer_repo="", timings=None, expand=None):
     """Run the full retrieval pipeline: hybrid search, rerank, dedupe, truncate.
 
     Dedupe runs on the *full ranked pool* before the final-k slice, so a query
@@ -78,10 +92,34 @@ def search_rank_dedupe(hybrid, reranker, query, collections, where, config, fina
     timings (see ``HybridSearch.search`` for the retrieval-side keys, plus
     ``rerank_ms`` and ``total_ms``). It is an out-param rather than a second
     return value so every existing caller keeps working unchanged.
+
+    ``expand`` decides related-chunk expansion: None follows
+    ``config.retrieval.expand_related``, and an explicit bool overrides it — that
+    is how ``search --expand`` opts in per query while the config default stays
+    off. Callers also fold in ``scope == "all"``: an explicit ``--scope code``
+    means "search code only", and expansion crosses collections by design, so
+    honouring the scope means not expanding. See ``_filter_pins_a_source`` for
+    the filter-side equivalent.
     """
     started = time.perf_counter()
     candidates = hybrid.search(query, top_k=config.retrieval.top_k, collections=collections,
                                where=where, timings=timings)
+    # One hop over the file-path edge, before reranking, so pulled-in chunks
+    # compete on merit instead of being appended as unranked extras. Skipped
+    # when the caller pinned a filter that expansion would quietly widen.
+    want_expand = config.retrieval.expand_related if expand is None else expand
+    if want_expand and not _filter_pins_a_source(where):
+        expand_started = time.perf_counter()
+        extra = expand_related(
+            hybrid.vector_store, candidates,
+            top_n=config.retrieval.expand_top_n,
+            per_anchor=config.retrieval.expand_per_anchor,
+            max_total=config.retrieval.expand_max_total,
+        )
+        candidates = candidates + extra
+        if timings is not None:
+            timings["expand_ms"] = (time.perf_counter() - expand_started) * 1000
+            timings["expanded_count"] = len(extra)
     rerank_started = time.perf_counter()
     if reranker and candidates:
         ranked = reranker.rerank(query, candidates, top_k=len(candidates))
@@ -90,6 +128,12 @@ def search_rank_dedupe(hybrid, reranker, query, collections, where, config, fina
     if timings is not None:
         timings["rerank_ms"] = (time.perf_counter() - rerank_started) * 1000
     ranked = apply_repo_preference(ranked, prefer_repo, config.retrieval.repo_boost)
+    # Re-seat expanded chunks under their anchors *after* ranking: the reranker
+    # scores them on merit, but context must not outrank what pulled it in.
+    ranked = interleave_after_anchors(
+        [r for r in ranked if "expanded_from" not in r.metadata],
+        [r for r in ranked if "expanded_from" in r.metadata],
+    )
     deduped = deduplicate_results(ranked, max_per_source=config.retrieval.max_per_source)
     if timings is not None:
         timings["total_ms"] = (time.perf_counter() - started) * 1000

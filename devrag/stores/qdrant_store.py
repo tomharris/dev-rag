@@ -143,6 +143,32 @@ class QdrantStore:
             distances.append(point.score)
         return QueryResult(ids=ids, documents=documents, metadatas=metadatas, distances=distances)
 
+    def fetch_by_filter(self, collection: str, where: dict, limit: int = 10) -> QueryResult:
+        """Return up to *limit* points matching *where*, with no vector query.
+
+        A metadata-only lookup ("which chunks belong to this file?"), used by
+        related-chunk expansion. Scores are 0.0 — there is no query to score
+        against; the caller assigns relevance. Hot filter fields carry payload
+        indexes, so this is a lookup rather than a scan.
+        """
+        if not where or not self._client.collection_exists(collection):
+            return QueryResult(ids=[], documents=[], metadatas=[], distances=[])
+        records, _ = self._client.scroll(
+            collection_name=collection,
+            scroll_filter=self._build_filter(where),
+            limit=limit,
+            with_payload=True,
+            with_vectors=False,
+        )
+        ids, documents, metadatas = [], [], []
+        for record in records:
+            payload = dict(record.payload) if record.payload else {}
+            ids.append(payload.pop("_original_id", str(record.id)))
+            documents.append(payload.pop("_document", ""))
+            metadatas.append(payload)
+        return QueryResult(ids=ids, documents=documents, metadatas=metadatas,
+                           distances=[0.0] * len(ids))
+
     def query(
         self,
         collection: str,

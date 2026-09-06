@@ -115,6 +115,7 @@ def search(
     session_id: str = "",
     channel_id: str = "",
     file_path: str = "",
+    expand: bool | None = None,
 ) -> str:
     """Search code, PRs, issues, and docs using hybrid retrieval.
 
@@ -138,6 +139,11 @@ def search(
         session_id: Optional Claude Code session UUID.
         channel_id: Optional Slack channel id.
         file_path: Optional exact file path match.
+        expand: Pull the PRs that touched a top code hit into the results (and
+            the current code for a top PR hit). Default follows config (off).
+            Set True for "why did X change" / "what changed in Y" questions;
+            leave off for "how does X work", where PR diffs crowd out the
+            implementation.
 
     All filter params are AND-combined against vector-store metadata
     and honored by both the dense and sparse (BM25) legs of hybrid search.
@@ -178,7 +184,8 @@ def search(
         prefer_repo = infer_repo(Path.cwd(), _get_metadata_db().get_all_repos())
     timings: dict = {}
     results = search_rank_dedupe(hybrid, reranker, query, collections, where, config, final_k,
-                                 prefer_repo, timings=timings)
+                                 prefer_repo, timings=timings,
+                                 expand=False if scope != "all" else expand)
     if config.retrieval.log_queries:
         log_search(_get_metadata_db(), query, collections, router.classify(query, scope=scope),
                    timings, len(results))

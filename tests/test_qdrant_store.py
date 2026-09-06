@@ -174,3 +174,49 @@ def test_upsert_wait_flag_forwards(mock_qdrant_client):
     store.upsert(collection="test", ids=["a"], embeddings=[[0.1] * 768],
                  documents=["doc"], metadatas=[{}], wait=False)
     assert mock_qdrant_client.upsert.call_args.kwargs["wait"] is False
+
+
+def test_fetch_by_filter_returns_matching_chunks(tmp_path):
+    """Metadata-only lookup backing related-chunk expansion."""
+    from devrag.stores.qdrant_store import QdrantStore
+    store = QdrantStore(path=str(tmp_path / "q"), embedding_dim=4)
+    store.upsert(
+        "code_chunks",
+        ids=["a", "b", "c"],
+        embeddings=[[0.1] * 4] * 3,
+        documents=["one", "two", "three"],
+        metadatas=[
+            {"repo": "app", "file_path": "src/auth.py"},
+            {"repo": "app", "file_path": "src/auth.py"},
+            {"repo": "app", "file_path": "src/other.py"},
+        ],
+    )
+    hits = store.fetch_by_filter("code_chunks", {"repo": "app", "file_path": "src/auth.py"},
+                                 limit=10)
+    assert sorted(hits.ids) == ["a", "b"]
+    assert sorted(hits.documents) == ["one", "two"]
+    assert hits.distances == [0.0, 0.0]
+
+
+def test_fetch_by_filter_respects_limit(tmp_path):
+    from devrag.stores.qdrant_store import QdrantStore
+    store = QdrantStore(path=str(tmp_path / "q"), embedding_dim=4)
+    store.upsert("code_chunks", ids=["a", "b"], embeddings=[[0.1] * 4] * 2,
+                 documents=["one", "two"],
+                 metadatas=[{"repo": "app", "file_path": "f.py"}] * 2)
+    assert len(store.fetch_by_filter("code_chunks", {"repo": "app"}, limit=1).ids) == 1
+
+
+def test_fetch_by_filter_on_missing_collection_is_empty(tmp_path):
+    from devrag.stores.qdrant_store import QdrantStore
+    store = QdrantStore(path=str(tmp_path / "q"), embedding_dim=4)
+    assert store.fetch_by_filter("nope", {"repo": "app"}, limit=5).ids == []
+
+
+def test_fetch_by_filter_without_a_filter_is_empty(tmp_path):
+    """An unfiltered scroll would return arbitrary chunks; expansion must not."""
+    from devrag.stores.qdrant_store import QdrantStore
+    store = QdrantStore(path=str(tmp_path / "q"), embedding_dim=4)
+    store.upsert("code_chunks", ids=["a"], embeddings=[[0.1] * 4], documents=["one"],
+                 metadatas=[{"repo": "app", "file_path": "f.py"}])
+    assert store.fetch_by_filter("code_chunks", {}, limit=5).ids == []

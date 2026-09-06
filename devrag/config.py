@@ -47,6 +47,19 @@ class RetrievalConfig:
     # Record every search into the local `query_metrics` table (timings, routed
     # collections, intent label). Local-only; feeds `devrag eval` triage.
     log_queries: bool = True
+    # Related-chunk expansion (devrag/retrieve/expansion.py): pull the PRs that
+    # touched a top code hit, and the current code for a top PR hit, into the
+    # candidate pool before reranking. Joined on (repo, file_path).
+    #
+    # Default off, from measurement: it is a large win on "why did X change"
+    # queries (R@5 0.688 -> 0.953) and a loss on "how does X work" queries
+    # (R@5 0.669 -> 0.544), because expanded chunks consume final_k slots. No
+    # setting won both — see evals/README.md for the full matrix. Turn it on
+    # globally for a history-heavy workload, or per query with `search --expand`.
+    expand_related: bool = False
+    expand_top_n: int = 5      # how many top candidates to expand from
+    expand_per_anchor: int = 2  # max related chunks per anchor
+    expand_max_total: int = 10  # hard cap on added candidates per query
 
 
 @dataclass
