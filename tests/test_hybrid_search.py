@@ -384,3 +384,87 @@ def test_expansion_is_suppressed_by_an_explicit_scope():
                                  final_k=5, expand=False)
     assert [r.chunk_id for r in results] == ["c1"]
     hybrid.vector_store.fetch_by_filter.assert_not_called()
+
+
+def _auto_config(mode="auto", max_results=2):
+    config = _config()
+    config.retrieval.expand_related = mode
+    config.retrieval.expand_max_results = max_results
+    return config
+
+
+def test_auto_mode_expands_a_history_question():
+    hybrid = MagicMock()
+    hybrid.vector_store = _store_returning_pr()
+    hybrid.search.return_value = [_expandable("c1", "src/auth.py", 0.9)]
+    results = search_rank_dedupe(hybrid, None, "why did we change auth", ["code_chunks"],
+                                 None, _auto_config(), final_k=5)
+    assert [r.chunk_id for r in results] == ["c1", "p1"]
+
+
+def test_auto_mode_does_not_expand_a_how_question():
+    """The measured trade-off: on 'how does X work', expanded chunks cost recall."""
+    hybrid = MagicMock()
+    hybrid.vector_store = _store_returning_pr()
+    hybrid.search.return_value = [_expandable("c1", "src/auth.py", 0.9)]
+    results = search_rank_dedupe(hybrid, None, "how does auth work", ["code_chunks"],
+                                 None, _auto_config(), final_k=5)
+    assert [r.chunk_id for r in results] == ["c1"]
+    hybrid.vector_store.fetch_by_filter.assert_not_called()
+
+
+def test_always_mode_expands_regardless_of_shape():
+    hybrid = MagicMock()
+    hybrid.vector_store = _store_returning_pr()
+    hybrid.search.return_value = [_expandable("c1", "src/auth.py", 0.9)]
+    results = search_rank_dedupe(hybrid, None, "how does auth work", ["code_chunks"],
+                                 None, _auto_config(mode="always"), final_k=5)
+    assert [r.chunk_id for r in results] == ["c1", "p1"]
+
+
+def test_explicit_expand_overrides_auto_on_a_how_question():
+    hybrid = MagicMock()
+    hybrid.vector_store = _store_returning_pr()
+    hybrid.search.return_value = [_expandable("c1", "src/auth.py", 0.9)]
+    results = search_rank_dedupe(hybrid, None, "how does auth work", ["code_chunks"],
+                                 None, _auto_config(), final_k=5, expand=True)
+    assert [r.chunk_id for r in results] == ["c1", "p1"]
+
+
+def test_slot_budget_caps_how_many_expanded_chunks_outrank_real_results():
+    """Bounds the damage when the history signal misfires: the failure mode is
+    always expanded chunks eating final_k slots from real results."""
+    hybrid = MagicMock()
+    store = MagicMock()
+    store.fetch_by_filter.side_effect = lambda coll, where, limit: (
+        QueryResult(ids=[f"p{i}" for i in range(limit)], documents=["diff"] * limit,
+                    metadatas=[{"repo": "app", "file_path": where["file_path"],
+                                "pr_number": i} for i in range(limit)],
+                    distances=[0.0] * limit)
+        if coll == "pr_diffs" else QueryResult(ids=[], documents=[], metadatas=[], distances=[])
+    )
+    hybrid.vector_store = store
+    # Four real results, so the budget actually binds on the final_k=5 slice.
+    hybrid.search.return_value = [
+        _expandable(f"c{i}", f"src/f{i}.py", 0.9 - i / 10) for i in range(4)
+    ]
+    config = _auto_config(max_results=1)
+    config.retrieval.max_per_source = 5
+    results = search_rank_dedupe(hybrid, None, "why did auth change", ["code_chunks"],
+                                 None, config, final_k=5)
+    real = [r for r in results if "expanded_from" not in r.metadata]
+    expanded = [r for r in results if "expanded_from" in r.metadata]
+    assert len(real) == 4, "real results must not lose their slots"
+    assert len(expanded) == 1
+
+
+def test_slot_budget_of_zero_lets_real_results_take_every_slot():
+    hybrid = MagicMock()
+    hybrid.vector_store = _store_returning_pr()
+    hybrid.search.return_value = [_expandable("c1", "src/auth.py", 0.9),
+                                  _expandable("c2", "src/b.py", 0.8)]
+    config = _auto_config(max_results=0)
+    config.retrieval.max_per_source = 5
+    results = search_rank_dedupe(hybrid, None, "why did auth change", ["code_chunks"],
+                                 None, config, final_k=2)
+    assert [r.chunk_id for r in results] == ["c1", "c2"]

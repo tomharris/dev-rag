@@ -788,7 +788,7 @@ def eval_run(
     top_k: int = typer.Option(5, help="Number of results per query"),
     prefer_repo: str = typer.Option("", "--prefer-repo", help="Apply the active-repo boost for this repo (default: off, for reproducibility)"),
     group_by: str = typer.Option("hop_type", "--group-by", help="Test-case label to break metrics down by (e.g. hop_type, intent); empty to skip"),
-    expand: bool = typer.Option(True, "--expand/--no-expand", help="Related-chunk expansion; --no-expand overrides config for an A/B against one index"),
+    expand: bool | None = typer.Option(None, "--expand/--no-expand", help="Force related-chunk expansion on/off for an A/B; default follows config (auto)"),
 ):
     """Run eval queries through the production retrieval pipeline and compute metrics.
 

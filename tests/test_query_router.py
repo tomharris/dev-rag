@@ -218,3 +218,28 @@ def test_explicit_scope_still_narrows_to_one_source():
     router = QueryRouter()
     assert router.route("how is a Slite page fetched", scope="slite") == ["slite_pages"]
     assert set(router.route("why did we migrate", scope="prs")) == {"pr_diffs", "pr_discussions"}
+
+
+def test_wants_history_catches_why_questions_the_intent_table_mislabels():
+    """Intent is first-match-wins, so a Slack-worded history question is labelled
+    `slack` and never reaches the `pr` rule — but it still wants history."""
+    router = QueryRouter()
+    assert router.classify("why did we throttle Slack web API calls") == "slack"
+    assert router.wants_history("why did we throttle Slack web API calls")
+
+
+def test_wants_history_covers_why_is_are_do_forms():
+    """_PR_PATTERNS only had `why did we` / `why was` / `why were`."""
+    router = QueryRouter()
+    for q in ["why is python pinned below 3.14", "why are Qdrant upserts batched",
+              "why do we index repo docs alongside code",
+              "when did we change the database schema", "why did we migrate to Redis"]:
+        assert router.wants_history(q), q
+
+
+def test_wants_history_is_false_for_how_and_where_questions():
+    router = QueryRouter()
+    for q in ["how does the embedder handle blank input", "where is the encoder defined",
+              "what fields does the Chunk dataclass have",
+              "how are markdown documents split into sections"]:
+        assert not router.wants_history(q), q

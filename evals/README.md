@@ -244,3 +244,54 @@ chunks carry no `file_path`). One hop over it is a decisive win on history
 questions and a real cost on "how does this work" questions, and the cost is
 slot competition, not bad retrieval. A richer graph would face the same
 constraint: the binding limit is `final_k`, not the edges.
+
+### Budgeting slots by query shape (the follow-up)
+
+The Stage 2 conclusion was that the cost is *slot competition, not bad
+retrieval*. That predicts a fix: spend slots on history only when the query asks
+about history. Tested, same fixed index:
+
+|                          | code P@5 | code R@5 | code MRR | join P@5 | join R@5 | join MRR |
+|--------------------------|---------:|---------:|---------:|---------:|---------:|---------:|
+| off                      |    0.315 |    0.669 |    0.524 |    0.288 |    0.688 |    0.688 |
+| always (re-seated)       |    0.395 |    0.544 |    0.457 |    0.338 |    0.953 |    0.776 |
+| **auto (shipped)**       |**0.315** |**0.669** |**0.524** |**0.338** |**0.953** |**0.776** |
+
+**The trade-off dissolves.** `auto` is identical to `off` on the code set and
+identical to `always` on the history set — the full win, at zero cost.
+
+The signal is `QueryRouter.wants_history()`: `_PR_PATTERNS` plus a bare
+`\bwhy\b`, checked **order-independently**. That last part is the whole trick.
+`classify()` is first-match-wins, so "why did we throttle Slack web API calls"
+is labelled `slack` and never reaches the `pr` rule — which is exactly why
+gating on routed collections was inert. A separate, unordered test sees it.
+
+Scoring the rule against the two sets: **16/16** history questions, **1/40**
+false positives on code questions. The bare `\bwhy\b` is what lifts recall from
+11/16 — `_PR_PATTERNS` had `why did we` / `why was` / `why were` but not
+`why is` / `why are` / `why do`.
+
+Per query, on the history set: 5 improved (4 of them from zero), 1 regressed
+(MRR 0.50 → 0.25 on "why did we move BM25 into Qdrant", recall still 1.00 — the
+right PR is present, just ranked lower). On the code set the gate fired once, on
+"what do I need to change to add a new language" — and expansion reached **zero**
+results, so nothing changed. That query already routes as `pr` anyway.
+
+**Caveat worth keeping in view.** These two eval sets are cleanly separated by
+exactly the property the gate tests, and `devrag-join.jsonl` was written as "why
+did X change" questions — so this partly measures that the detector agrees with
+how the set was built. What is *not* circular: the rule is a generic `\bwhy\b`
+rather than anything tuned per query, and the 1/40 false-positive rate is
+measured against 40 code questions written before the rule existed. Real traffic
+will be messier than a clean split. `expand_max_results` exists for that case: it
+caps how many expanded chunks may outrank real results, so a misfire costs at
+most a couple of slots rather than the answer. `query_metrics` records how often
+the gate fires in practice.
+
+### Where this leaves the graph question
+
+The Stage 2 note said a richer graph would hit the same `final_k` wall. It
+would — but the wall is now known to be passable by *asking what the query
+wants* before spending slots. Any future edge type (an AST call graph, Stage 3)
+should ship with its own shape gate rather than expanding unconditionally; the
+measured lesson is that edges are cheap and slots are not.
