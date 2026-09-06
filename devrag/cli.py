@@ -105,6 +105,7 @@ def search(
     session_id: str = typer.Option("", "--session-id", help="Filter by Claude Code session UUID"),
     channel_id: str = typer.Option("", "--channel", help="Filter by Slack channel id"),
     file_path: str = typer.Option("", "--file-path", help="Exact file path match"),
+    expand: bool | None = typer.Option(None, "--expand/--no-expand", help="Pull in PRs that touched a top code hit (and vice versa); default follows config"),
 ):
     """Search code, PRs, issues, and docs."""
     # embed_query() rejects blank text (a zero vector would match arbitrarily),
@@ -148,8 +149,11 @@ def search(
     if not repo and config.retrieval.repo_boost:
         prefer_repo = infer_repo(Path.cwd(), meta.get_all_repos())
     timings: dict = {}
+    # None follows config; an explicit --expand overrides it. An explicit
+    # --scope always wins, since expansion crosses collections.
     results = search_rank_dedupe(hybrid, reranker, query, collections, where or None, config,
-                                 final_k, prefer_repo, timings=timings)
+                                 final_k, prefer_repo, timings=timings,
+                                 expand=False if scope != "all" else expand)
     if config.retrieval.log_queries:
         log_search(meta, query, collections, router.classify(query, scope=scope),
                    timings, len(results))
@@ -784,6 +788,7 @@ def eval_run(
     top_k: int = typer.Option(5, help="Number of results per query"),
     prefer_repo: str = typer.Option("", "--prefer-repo", help="Apply the active-repo boost for this repo (default: off, for reproducibility)"),
     group_by: str = typer.Option("hop_type", "--group-by", help="Test-case label to break metrics down by (e.g. hop_type, intent); empty to skip"),
+    expand: bool = typer.Option(True, "--expand/--no-expand", help="Related-chunk expansion; --no-expand overrides config for an A/B against one index"),
 ):
     """Run eval queries through the production retrieval pipeline and compute metrics.
 
@@ -809,6 +814,7 @@ def eval_run(
         results = search_rank_dedupe(
             hybrid, reranker, query, collections, case.get("filters") or None,
             config, top_k, prefer_repo,
+            expand=False if scope != "all" else expand,
         )
         result_metas = [r.metadata for r in results]
         search_results_map[query] = result_metas

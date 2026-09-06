@@ -311,6 +311,29 @@ By hop_type:
 Metrics: precision@k, recall@k, and MRR (Mean Reciprocal Rank). A bundled set
 for this repo lives in [`evals/`](evals/README.md).
 
+### Related-chunk expansion
+
+`--expand` follows the file-path edge one hop: a top code hit pulls in the PRs
+that touched that file, and a top PR hit pulls in the current code.
+
+```bash
+devrag search "why did we throttle Slack web API calls" --expand
+### 1. _call (dev-rag/devrag/utils/slack_client.py:72-95)
+### 2. SlackClient (dev-rag/devrag/utils/slack_client.py:29-141)
+### 3. [PR #61] fix: throttle and back off Slack web-API calls to avoid 429s — …/slack_client.py
+```
+
+It is **off by default**, because measurement showed no setting that helps both
+query shapes: on "why did X change" questions it lifts R@5 from 0.688 to 0.953
+with no regressions, but on "how does X work" questions it costs recall
+(0.669 → 0.544), since pulled-in chunks consume result slots. Turn it on per
+query with `--expand`, or globally with `retrieval.expand_related: true`. The
+full matrix is in [`evals/README.md`](evals/README.md).
+
+Expanded chunks are always shown *below* the result that pulled them in, and an
+explicit `--scope` or a source-pinning filter (`--pr-number`, `--chunk-type`)
+suppresses expansion entirely.
+
 ### Query metrics
 
 Every search from the CLI and the MCP server is recorded locally in the
@@ -428,6 +451,10 @@ retrieval:
   max_per_source: 2             # Max results kept per file/PR/issue/etc.
   repo_boost: 0.15              # Soft preference for the cwd repo (fraction of score spread; 0 = off)
   log_queries: true             # Record searches (timings, routed collections, intent) in query_metrics
+  expand_related: false         # Follow the file-path edge to related PRs/code (see above)
+  expand_top_n: 5               # How many top candidates to expand from
+  expand_per_anchor: 2          # Max related chunks pulled in per candidate
+  expand_max_total: 10          # Hard cap on added candidates per query
 
 code:
   chunk_max_tokens: 512

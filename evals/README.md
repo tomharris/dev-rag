@@ -191,3 +191,56 @@ What Stage 1 actually delivers is not a score:
   three PRs that touched it, from one filter.
 - PR/issue chunks can finally receive the active-repo boost, which compares
   against `infer_repo()`'s bare name.
+
+## Related-chunk expansion (Stage 2) — 2026-09-06
+
+Four configurations, one fixed index (968 dev-rag code chunks + 1249 PR chunks
+from 71 synced PRs), reranking on. `devrag.jsonl` is 40 code questions;
+`devrag-join.jsonl` is 16 "why did X change" questions keyed on `expected_prs`.
+
+|                         | code P@5 | code R@5 | code MRR | join P@5 | join R@5 | join MRR |
+|-------------------------|---------:|---------:|---------:|---------:|---------:|---------:|
+| off (baseline)          |    0.315 |    0.669 |    0.524 |    0.288 |    0.688 |    0.688 |
+| on, 5/2/10              |    0.340 |    0.665 |    0.542 |    0.338 |    0.875 |    0.740 |
+| on, tightened 3/1/3     |    0.325 |    0.660 |    0.518 |    0.300 |    0.750 |    0.703 |
+| on, gated to routed     |    0.315 |    0.669 |    0.524 |    0.300 |    0.688 |    0.688 |
+| **on, re-seated (ship)**|**0.395** |**0.544** |**0.457** |**0.338** |**0.953** |**0.776** |
+
+**No configuration won both sets, so expansion ships off by default** with a
+per-query `--expand` opt-in. What each row taught:
+
+- **Tightening the budget was worse on both axes.** Fewer, shallower expansions
+  gave back most of the join win without protecting the code set. Rejected.
+- **Gating expansion to the collections the router already chose was inert** —
+  byte-identical to the baseline. The three join queries it was supposed to help
+  are worded around Slack, so the router labels them `slack` and routes away
+  from PR collections entirely. The router's intent labels do not track which
+  queries want history, so they cannot govern expansion. Rejected.
+- **Re-seating** (an expanded chunk is placed under the result that pulled it in,
+  after ranking, and dropped if that anchor didn't survive) is the shipped rule.
+  It fixes a real failure the unrestricted version had: for "how does the Jira
+  client authenticate" the reranker put two historical diffs of
+  `jira_client.py` *above* the implementation — the query asked what the code
+  does and got what it used to do.
+
+### Read the code-set numbers carefully
+
+The apparent gain in the 5/2/10 row is largely a **metric artifact**: 8 of its 21
+expansion-added results are PR *diff* chunks whose `file_path` matches an
+`expected_files` entry, so `compute_metrics` credits them as if the code had been
+found. Per query the same row is 1 improved / 5 regressed. Precision rising while
+recall falls (0.395 vs 0.544 in the shipped row) is the same effect: expanded
+chunks match the expected file but consume `final_k` slots that other expected
+files needed.
+
+The join set has no such artifact — its hits are `expected_prs`, which only a PR
+chunk can satisfy — and there the result is unambiguous: **R@5 0.688 → 0.953,
+MRR 0.688 → 0.776, and no query regressed.**
+
+### What this means for the graph question
+
+This is the file-path edge, the only edge the corpus actually has (issue and Jira
+chunks carry no `file_path`). One hop over it is a decisive win on history
+questions and a real cost on "how does this work" questions, and the cost is
+slot competition, not bad retrieval. A richer graph would face the same
+constraint: the binding limit is `final_k`, not the edges.

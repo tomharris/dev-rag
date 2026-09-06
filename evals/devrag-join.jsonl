@@ -1,0 +1,16 @@
+{"query": "why did we move BM25 into Qdrant", "expected_prs": [37], "hop_type": "multi", "filters": {"repo": "dev-rag"}}
+{"query": "why did we drop ChromaDB", "expected_prs": [36], "hop_type": "multi", "filters": {"repo": "dev-rag"}}
+{"query": "why is python pinned below 3.14", "expected_prs": [40], "hop_type": "multi", "filters": {"repo": "dev-rag"}}
+{"query": "why are Qdrant upserts batched", "expected_prs": [41], "hop_type": "multi", "filters": {"repo": "dev-rag"}}
+{"query": "why did we switch the Slack token to desktop localStorage", "expected_prs": [58], "hop_type": "multi", "filters": {"repo": "dev-rag"}}
+{"query": "when did we start reading the Slack d cookie from the desktop app", "expected_prs": [49], "hop_type": "multi", "filters": {"repo": "dev-rag"}}
+{"query": "why was the rag-first block gate changed", "expected_prs": [43, 66], "hop_type": "multi", "filters": {"repo": "dev-rag"}}
+{"query": "why did we add a corporate CA bundle option", "expected_prs": [54, 55, 56, 57], "hop_type": "multi", "filters": {"repo": "dev-rag"}}
+{"query": "why is Slite sync keyed on lastEditedAt", "expected_prs": [64], "hop_type": "multi", "filters": {"repo": "dev-rag"}}
+{"query": "why did we throttle Slack web API calls", "expected_prs": [61], "hop_type": "multi", "filters": {"repo": "dev-rag"}}
+{"query": "why did we add an offline model bundle", "expected_prs": [62, 63], "hop_type": "multi", "filters": {"repo": "dev-rag"}}
+{"query": "what changed to make PR sync incremental", "expected_prs": [33], "hop_type": "multi", "filters": {"repo": "dev-rag"}}
+{"query": "why do we index repo docs alongside code", "expected_prs": [50], "hop_type": "multi", "filters": {"repo": "dev-rag"}}
+{"query": "why did we introduce index refresh", "expected_prs": [51], "hop_type": "multi", "filters": {"repo": "dev-rag"}}
+{"query": "why are per-file indexing failures isolated", "expected_prs": [52], "hop_type": "multi", "filters": {"repo": "dev-rag"}}
+{"query": "why did we start indexing doc comments in code chunks", "expected_prs": [74], "hop_type": "multi", "filters": {"repo": "dev-rag"}}

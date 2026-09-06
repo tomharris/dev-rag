@@ -202,3 +202,47 @@ def test_cli_search_rejects_blank_query(mock_get):
     assert result.exit_code == 2
     assert "query" in result.output.lower()
     assert mock_get.call_count == 0  # rejected before loading models
+
+
+@patch("devrag.stores.metadata_db.MetadataDB")
+@patch("devrag.cli._get_search_components")
+def test_cli_search_suppresses_expansion_for_an_explicit_scope(mock_get, mock_db):
+    mock_hybrid = MagicMock()
+    mock_hybrid.search.return_value = []
+    mock_get.return_value = (mock_hybrid, MagicMock(), MagicMock())
+    with patch("devrag.retrieve.hybrid_search.expand_related") as expand:
+        assert runner.invoke(app, ["search", "auth", "--scope", "code"]).exit_code == 0
+        expand.assert_not_called()
+        assert runner.invoke(app, ["search", "auth"]).exit_code == 0
+
+
+@patch("devrag.stores.metadata_db.MetadataDB")
+@patch("devrag.cli._get_search_components")
+def test_cli_search_expand_flag_overrides_config(mock_get, mock_db):
+    """--expand opts in per query; config default is off."""
+    mock_hybrid = MagicMock()
+    mock_hybrid.search.return_value = []
+    config = MagicMock()
+    config.retrieval.expand_related = False
+    mock_get.return_value = (mock_hybrid, MagicMock(), config)
+    with patch("devrag.retrieve.hybrid_search.search_rank_dedupe") as srd:
+        srd.return_value = []
+        runner.invoke(app, ["search", "why did auth change"])
+        assert srd.call_args.kwargs["expand"] is None  # follow config
+        runner.invoke(app, ["search", "why did auth change", "--expand"])
+        assert srd.call_args.kwargs["expand"] is True
+        runner.invoke(app, ["search", "why did auth change", "--no-expand"])
+        assert srd.call_args.kwargs["expand"] is False
+
+
+@patch("devrag.stores.metadata_db.MetadataDB")
+@patch("devrag.cli._get_search_components")
+def test_cli_search_scope_beats_expand_flag(mock_get, mock_db):
+    """An explicit scope always wins: expansion crosses collections."""
+    mock_hybrid = MagicMock()
+    mock_hybrid.search.return_value = []
+    mock_get.return_value = (mock_hybrid, MagicMock(), MagicMock())
+    with patch("devrag.retrieve.hybrid_search.search_rank_dedupe") as srd:
+        srd.return_value = []
+        runner.invoke(app, ["search", "auth", "--expand", "--scope", "code"])
+        assert srd.call_args.kwargs["expand"] is False

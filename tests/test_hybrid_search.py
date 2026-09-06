@@ -151,10 +151,13 @@ def test_deduplicate_preserves_order():
     assert deduped == results
 
 
-def _config(top_k=20, max_per_source=1):
+def _config(top_k=20, max_per_source=1, expand_related=False):
     config = DevragConfig()
     config.retrieval.top_k = top_k
     config.retrieval.max_per_source = max_per_source
+    # Expansion ships off by default (see RetrievalConfig); the tests that
+    # exercise it opt in explicitly.
+    config.retrieval.expand_related = expand_related
     return config
 
 
@@ -285,3 +288,99 @@ def test_hybrid_search_records_stage_timings():
     hs.search("q", top_k=5, timings=timings)
     assert set(timings) == {"embed_ms", "sparse_ms", "vector_ms"}
     assert all(v >= 0.0 for v in timings.values())
+
+
+def _expandable(chunk_id, file_path, score, repo="app"):
+    return SearchResult(chunk_id=chunk_id, text="code", score=score,
+                        metadata={"repo": repo, "file_path": file_path})
+
+
+def _store_returning_pr(chunk_id="p1"):
+    store = MagicMock()
+    store.fetch_by_filter.side_effect = lambda coll, where, limit: (
+        QueryResult(ids=[chunk_id], documents=["diff"],
+                    metadatas=[{"repo": "app", "file_path": where["file_path"],
+                                "pr_number": 12, "chunk_type": "diff"}],
+                    distances=[0.0])
+        if coll == "pr_diffs" else QueryResult(ids=[], documents=[], metadatas=[], distances=[])
+    )
+    return store
+
+
+def test_pipeline_expands_a_code_hit_into_the_pr_that_touched_it():
+    hybrid = MagicMock()
+    hybrid.vector_store = _store_returning_pr()
+    hybrid.search.return_value = [_expandable("c1", "src/auth.py", 0.9)]
+    results = search_rank_dedupe(hybrid, None, "q", ["code_chunks"], None, _config(expand_related=True), final_k=5)
+    assert [r.chunk_id for r in results] == ["c1", "p1"]
+
+
+def test_expansion_can_be_turned_off():
+    hybrid = MagicMock()
+    hybrid.vector_store = _store_returning_pr()
+    hybrid.search.return_value = [_expandable("c1", "src/auth.py", 0.9)]
+    config = _config(expand_related=False)
+    results = search_rank_dedupe(hybrid, None, "q", ["code_chunks"], None, config, final_k=5)
+    assert [r.chunk_id for r in results] == ["c1"]
+    hybrid.vector_store.fetch_by_filter.assert_not_called()
+
+
+def test_expansion_is_skipped_when_the_caller_pinned_a_source():
+    """--pr-number 12 or --chunk-type diff is a statement of intent; expansion
+    crosses collections and would quietly widen it."""
+    hybrid = MagicMock()
+    hybrid.vector_store = _store_returning_pr()
+    hybrid.search.return_value = [_expandable("c1", "src/auth.py", 0.9)]
+    for where in [{"pr_number": 12}, {"chunk_type": "diff"}, {"session_id": "s"}]:
+        hybrid.vector_store.fetch_by_filter.reset_mock()
+        search_rank_dedupe(hybrid, None, "q", ["code_chunks"], where, _config(expand_related=True), final_k=5)
+        hybrid.vector_store.fetch_by_filter.assert_not_called()
+
+
+def test_expansion_still_runs_for_a_repo_or_file_path_filter():
+    """Those narrow *which* file, which is exactly what expansion joins on."""
+    hybrid = MagicMock()
+    hybrid.vector_store = _store_returning_pr()
+    hybrid.search.return_value = [_expandable("c1", "src/auth.py", 0.9)]
+    search_rank_dedupe(hybrid, None, "q", ["code_chunks"], {"repo": "app"}, _config(expand_related=True), final_k=5)
+    hybrid.vector_store.fetch_by_filter.assert_called()
+
+
+def test_expanded_candidates_are_reranked_then_reseated_under_their_anchor():
+    """They enter the pool before reranking so the cross-encoder can drop them,
+    but a survivor is placed under its anchor, never above it."""
+    hybrid = MagicMock()
+    hybrid.vector_store = _store_returning_pr()
+    hybrid.search.return_value = [_expandable("c1", "src/auth.py", 0.9)]
+    reranker = MagicMock()
+    reranker.rerank.side_effect = lambda q, cands, top_k: sorted(
+        cands, key=lambda r: 0 if r.chunk_id == "p1" else 1
+    )[:top_k]
+    results = search_rank_dedupe(hybrid, reranker, "q", ["code_chunks"], None, _config(expand_related=True),
+                                 final_k=5)
+    # The reranker put the expanded PR first; re-seating keeps context under the
+    # result that pulled it in.
+    assert [r.chunk_id for r in results] == ["c1", "p1"]
+    assert {c.chunk_id for c in reranker.rerank.call_args.args[1]} == {"c1", "p1"}
+
+
+def test_expansion_records_timings():
+    hybrid = MagicMock()
+    hybrid.vector_store = _store_returning_pr()
+    hybrid.search.return_value = [_expandable("c1", "src/auth.py", 0.9)]
+    timings: dict = {}
+    search_rank_dedupe(hybrid, None, "q", ["code_chunks"], None, _config(expand_related=True), final_k=5,
+                       timings=timings)
+    assert timings["expanded_count"] == 1
+    assert timings["expand_ms"] >= 0.0
+
+
+def test_expansion_is_suppressed_by_an_explicit_scope():
+    """`--scope code` means "search code only"; expansion crosses collections."""
+    hybrid = MagicMock()
+    hybrid.vector_store = _store_returning_pr()
+    hybrid.search.return_value = [_expandable("c1", "src/auth.py", 0.9)]
+    results = search_rank_dedupe(hybrid, None, "q", ["code_chunks"], None, _config(expand_related=True),
+                                 final_k=5, expand=False)
+    assert [r.chunk_id for r in results] == ["c1"]
+    hybrid.vector_store.fetch_by_filter.assert_not_called()
