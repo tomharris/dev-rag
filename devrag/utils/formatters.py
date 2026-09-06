@@ -3,6 +3,20 @@ from __future__ import annotations
 from devrag.types import DocIndexStats, IndexStats, IssueSyncStats, JiraSyncStats, PRSyncStats, SearchResult, SessionSyncStats, SlackSyncStats, SliteSyncStats
 
 
+def _located(metadata: dict) -> str:
+    """``repo/path`` for a chunk, or just the path when it carries no repo.
+
+    Paths are stored repo-relative, so the repo name is what disambiguates
+    ``internal/ingest/roster.go`` across a multi-repo index — it used to be
+    implicit in the absolute path.
+    """
+    file_path = metadata.get("file_path", "")
+    repo = metadata.get("repo", "")
+    if repo and file_path:
+        return f"{repo}/{file_path}"
+    return file_path or "unknown"
+
+
 def format_search_results(results: list[SearchResult]) -> str:
     if not results:
         return "No results found."
@@ -98,7 +112,7 @@ def format_search_results(results: list[SearchResult]) -> str:
         elif chunk_type in ("diff", "description", "review_comment"):
             pr_num = r.metadata.get("pr_number", "?")
             pr_title = r.metadata.get("pr_title", "")
-            file_path = r.metadata.get("file_path", "")
+            file_path = _located(r.metadata) if r.metadata.get("file_path") else ""
             if chunk_type == "review_comment":
                 reviewer = r.metadata.get("reviewer", "")
                 lines.append(f"### {i}. [PR #{pr_num}] Review comment by {reviewer} on {file_path}")
@@ -116,7 +130,7 @@ def format_search_results(results: list[SearchResult]) -> str:
             lines.append("```")
             lines.append("")
         elif chunk_type == "document":
-            file_path = r.metadata.get("file_path", "unknown")
+            file_path = _located(r.metadata)
             section_path = r.metadata.get("section_path", "")
             entity_name = r.metadata.get("entity_name", section_path)
             lines.append(f"### {i}. [{entity_name}] {file_path}")
@@ -131,7 +145,7 @@ def format_search_results(results: list[SearchResult]) -> str:
             lines.append("```")
             lines.append("")
         else:
-            file_path = r.metadata.get("file_path", "unknown")
+            file_path = _located(r.metadata)
             # line_range is a pre-formatted "start-end" string, not a pair —
             # indexing it yields the first two *characters*.
             line_range = r.metadata.get("line_range", "")

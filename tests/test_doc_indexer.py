@@ -116,7 +116,7 @@ def test_index_repo_docs_indexes_and_tags_repo(tmp_dir, repo_doc_deps):
     assert store.count("documents") >= 2
 
     # Doc chunks are tracked under the repo namespace, and carry the repo tag.
-    readme_chunks = meta.get_chunks_for_file(str(repo / "README.md"), repo="myrepo")
+    readme_chunks = meta.get_chunks_for_file("README.md", repo="myrepo")
     assert readme_chunks
     payload = store.get_by_ids("documents", readme_chunks[:1]).metadatas[0]
     assert payload["repo"] == "myrepo"
@@ -148,13 +148,13 @@ def test_index_repo_docs_removes_deleted_doc(tmp_dir, repo_doc_deps):
     (repo / "EXTRA.md").write_text("# Extra\n\nDelete me.\n")
     indexer = DocIndexer(store, meta, embedder, sparse_encoder)
     indexer.index_repo_docs(repo, repo_name="myrepo")
-    extra_chunks = meta.get_chunks_for_file(str(repo / "EXTRA.md"), repo="myrepo")
+    extra_chunks = meta.get_chunks_for_file("EXTRA.md", repo="myrepo")
     assert extra_chunks
 
     (repo / "EXTRA.md").unlink()
     stats = indexer.index_repo_docs(repo, repo_name="myrepo")
     assert stats.files_removed == 1
-    assert meta.get_chunks_for_file(str(repo / "EXTRA.md"), repo="myrepo") == []
+    assert meta.get_chunks_for_file("EXTRA.md", repo="myrepo") == []
     # The deleted doc's chunks are gone from the documents collection.
     assert store.get_by_ids("documents", extra_chunks).ids == []
 
@@ -180,7 +180,7 @@ def test_index_repo_docs_isolates_failing_file(tmp_dir, repo_doc_deps):
 
     assert stats.files_failed == 1
     assert stats.files_indexed == 1  # GOOD.md still got in
-    assert meta.get_chunks_for_file(str(repo / "GOOD.md"), repo="myrepo")
+    assert meta.get_chunks_for_file("GOOD.md", repo="myrepo")
 
 
 def test_failed_file_is_retried_not_skipped(tmp_dir, repo_doc_deps):
@@ -205,10 +205,10 @@ def test_failed_file_is_retried_not_skipped(tmp_dir, repo_doc_deps):
 
     s1 = indexer.index_repo_docs(repo, repo_name="myrepo")
     assert s1.files_failed == 1
-    assert meta.get_file_hash(str(repo / "FLAKY.md"), repo="myrepo") is None
+    assert meta.get_file_hash("FLAKY.md", repo="myrepo") is None
 
     # Second incremental run retries (hash was never stored) and succeeds.
     s2 = indexer.index_repo_docs(repo, repo_name="myrepo", incremental=True)
     assert s2.files_indexed == 1
     assert s2.files_skipped == 0
-    assert meta.get_chunks_for_file(str(repo / "FLAKY.md"), repo="myrepo")
+    assert meta.get_chunks_for_file("FLAKY.md", repo="myrepo")

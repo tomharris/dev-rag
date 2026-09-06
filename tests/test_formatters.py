@@ -135,3 +135,26 @@ def test_format_doc_index_stats():
     assert "10" in output
     assert "8" in output
     assert "42" in output
+
+
+def test_code_result_location_is_prefixed_with_the_repo():
+    """Paths are repo-relative, so the repo name is what disambiguates them."""
+    from devrag.types import SearchResult
+    from devrag.utils.formatters import format_search_results
+    out = format_search_results([SearchResult(
+        chunk_id="c1", text="def f(): pass", score=1.0,
+        metadata={"file_path": "src/main.py", "repo": "myrepo",
+                  "entity_name": "f", "line_range": "1-1", "language": "python"},
+    )])
+    assert "myrepo/src/main.py:1-1" in out
+
+
+def test_result_without_a_repo_shows_the_bare_path():
+    from devrag.types import SearchResult
+    from devrag.utils.formatters import format_search_results
+    out = format_search_results([SearchResult(
+        chunk_id="c1", text="hi", score=1.0,
+        metadata={"file_path": "/abs/notes.md", "chunk_type": "document",
+                  "entity_name": "notes"},
+    )])
+    assert "/abs/notes.md" in out

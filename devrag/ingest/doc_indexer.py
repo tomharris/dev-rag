@@ -4,6 +4,7 @@ import logging
 import re
 from pathlib import Path
 from devrag.types import Chunk, DocIndexStats
+from devrag.utils.git import relative_to_repo
 
 logger = logging.getLogger(__name__)
 
@@ -180,11 +181,15 @@ class DocIndexer:
         doc_files = [f for f in files if f.suffix.lower() in DOC_EXTENSIONS]
         stats.files_scanned = len(doc_files)
 
-        current_paths = {str(f) for f in doc_files}
+        current_paths = {relative_to_repo(f, repo_path) for f in doc_files}
 
         # Detect removed docs — scoped to this repo and to doc extensions only, so the
         # repo's code files (sharing the same repo namespace) are never deleted here.
         previously_indexed = set(self.metadata_db.get_indexed_files_for_repo(repo_name))
+        # As in CodeIndexer, this doubles as the migration for a repo indexed
+        # before paths were relative: old absolute paths are absent from
+        # `current_paths`, so their orphaned chunks are deleted here and the file
+        # is re-indexed below under its relative path.
         removed = {
             p for p in previously_indexed if Path(p).suffix.lower() in DOC_EXTENSIONS
         } - current_paths
@@ -196,10 +201,12 @@ class DocIndexer:
             stats.files_removed += 1
 
         for file_path in doc_files:
-            self._safe_index_doc_file(file_path, repo=repo_name, incremental=incremental, stats=stats)
+            self._safe_index_doc_file(file_path, repo=repo_name, incremental=incremental,
+                                      stats=stats, base_path=repo_path)
         return stats
 
-    def _safe_index_doc_file(self, file_path: Path, repo: str, incremental: bool, stats: DocIndexStats) -> None:
+    def _safe_index_doc_file(self, file_path: Path, repo: str, incremental: bool,
+                             stats: DocIndexStats, base_path: Path | None = None) -> None:
         """Index one doc file, isolating failures so one bad file can't abort the run.
 
         A single oversized/unembeddable file (e.g. an embed 400) is logged and
@@ -209,17 +216,22 @@ class DocIndexer:
         a failed file is retried (not silently skipped) on the next run.
         """
         try:
-            self._index_doc_file(file_path, repo=repo, incremental=incremental, stats=stats)
+            self._index_doc_file(file_path, repo=repo, incremental=incremental, stats=stats,
+                                 base_path=base_path)
         except Exception as exc:
             stats.files_failed += 1
             logger.warning("Failed to index doc %s: %s", file_path, exc)
 
-    def _index_doc_file(self, file_path: Path, repo: str, incremental: bool, stats: DocIndexStats) -> None:
+    def _index_doc_file(self, file_path: Path, repo: str, incremental: bool,
+                        stats: DocIndexStats, base_path: Path | None = None) -> None:
         """Index a single doc file into ``documents``, updating *stats* in place.
 
         Shared by ``index_docs`` (repo="") and ``index_repo_docs`` (repo=<name>).
+        Repo docs store a repo-relative path, matching code chunks and GitHub's
+        PR-diff paths; a standalone doc directory has no repo root to be relative
+        to (*base_path* is None), so those keep an absolute path.
         """
-        rel_path = str(file_path)
+        rel_path = relative_to_repo(file_path, base_path)
         content_hash = hashlib.sha256(file_path.read_bytes()).hexdigest()
         if incremental:
             stored_hash = self.metadata_db.get_file_hash(rel_path, repo=repo)

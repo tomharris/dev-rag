@@ -158,3 +158,36 @@ queries happen to be tagged `multi`. It is a routing repair showing up in a
 - `_DOC_PATTERNS` matches bare `\bprocess\b`, `\bstandard\b` and
   `\bconvention\b`, which are ordinary code words. It is not a zero-result bug
   (the doc intent includes code), so it was left alone.
+
+## After path normalization (Stage 1) — 2026-09-06
+
+```
+              router-fix   stage1
+Precision@5        0.305    0.295
+Recall@5           0.644    0.625
+MRR                0.521    0.492
+```
+
+**This is corpus drift, not a regression from the change.** Path normalization
+cannot affect ranking: a chunk's embedded text is `# In class X` + doc comment +
+raw code, and contains no path (verified against the live index). What moved is
+the corpus. The router-fix run scored a 939-chunk index built *before* Stage 0's
+own new code existed; the stage1 run scores a 968-chunk index that includes
+`metrics.py`, `migrations.py`, the new tests, and the edits to `query_router.py`,
+`config.py` and `git.py`. Six queries moved — three down, three up — and every
+file that entered a top-5 is one this session created or edited.
+
+**Methodological caveat: this eval set indexes the repo it measures.** Editing
+dev-rag moves the baseline under you. Two runs are only comparable if the index
+was built from the same commit. When comparing a retrieval change, reindex once
+and run both configurations against that same index — don't compare across a
+reindex that pulled in new source.
+
+What Stage 1 actually delivers is not a score:
+
+- **PR-to-code join: 0/760 → 612/760** chunks on the live index (the remaining
+  148 are files deleted or renamed since those PRs — correctly unjoinable).
+- `search --file-path internal/ingest/roster.go` now returns the code *and* the
+  three PRs that touched it, from one filter.
+- PR/issue chunks can finally receive the active-repo boost, which compares
+  against `infer_repo()`'s bare name.

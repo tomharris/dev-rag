@@ -15,6 +15,19 @@ from devrag.utils.http import (
 API_BASE = "https://api.github.com"
 
 
+def bare_repo_name(repo: str) -> str:
+    """Return the repository name from an ``owner/name`` slug.
+
+    GitHub identifies a repo as ``owner/name``, but the local ``code_repos``
+    registry, ``infer_repo`` and ``search --repo`` all use the bare directory
+    name. Chunk payloads therefore store the bare name, so a PR and the code it
+    touched agree on one ``repo`` value; the full slug is kept alongside as
+    ``repo_full``, and sync cursors stay keyed on the slug because that is the
+    GitHub identity, not a search facet.
+    """
+    return repo.rsplit("/", 1)[-1]
+
+
 def _rate_limit_retry_delay(resp: httpx.Response, attempt: int) -> float | None:
     """Seconds to wait before retrying, or ``None`` to accept the response.
 

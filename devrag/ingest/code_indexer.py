@@ -12,7 +12,7 @@ from devrag.config import CodeConfig
 from devrag.stores.metadata_db import MetadataDB
 from devrag.stores.qdrant_store import QdrantStore
 from devrag.types import Chunk, IndexStats
-from devrag.utils.git import discover_files
+from devrag.utils.git import discover_files, relative_to_repo
 
 logger = logging.getLogger(__name__)
 
@@ -480,8 +480,14 @@ def extract_chunks_from_file(
     include_doc_comments: bool = True,
     doc_comment_max_lines: int = DOC_COMMENT_MAX_LINES,
     index_file_headers: bool = True,
+    stored_path: str = "",
 ) -> list[Chunk]:
     """Parse *file_path* with tree-sitter and return a list of Chunks.
+
+    *file_path* is where the bytes are read from; *stored_path* is what goes into
+    chunk metadata and chunk IDs. `CodeIndexer.index_repo` passes the
+    repo-relative form so a chunk's `file_path` matches the path GitHub reports
+    in a PR diff. Defaults to `str(file_path)` for direct callers.
 
     Returns an empty list for unsupported file types, parse errors, or files
     larger than *max_file_bytes* (0 disables the cap).
@@ -530,19 +536,22 @@ def extract_chunks_from_file(
     target_types = ENTITY_NODE_TYPES.get(language)
     if not target_types:
         # Fallback: whole-file chunk
-        return _whole_file_chunk(file_path, source, language, repo_name, max_tokens)
+        return _whole_file_chunk(file_path, source, language, repo_name, max_tokens,
+                                 stored_path=stored_path)
 
     entity_nodes = _collect_entity_nodes(tree.root_node, target_types, language)
 
     if not entity_nodes:
-        return _whole_file_chunk(file_path, source, language, repo_name, max_tokens)
+        return _whole_file_chunk(file_path, source, language, repo_name, max_tokens,
+                                 stored_path=stored_path)
 
     chunks: list[Chunk] = []
-    str_file_path = str(file_path)
+    str_file_path = stored_path or str(file_path)
 
     if index_file_headers:
         header = _file_header_chunk(
-            tree.root_node, file_path, source, language, repo_name, max_tokens
+            tree.root_node, file_path, source, language, repo_name, max_tokens,
+            stored_path=str_file_path,
         )
         if header is not None:
             chunks.append(header)
@@ -615,6 +624,7 @@ def _file_header_chunk(
     language: str,
     repo_name: str,
     max_tokens: int = 512,
+    stored_path: str = "",
 ) -> Chunk | None:
     """Return a chunk for the file's leading comment block / module docstring.
 
@@ -658,7 +668,7 @@ def _file_header_chunk(
     if len(text) > max_chars:
         text = text[:max_chars] + "\n# ... (truncated)"
 
-    str_file_path = str(file_path)
+    str_file_path = stored_path or str(file_path)
     line_start = blocks[0].start_point[0] + 1
     line_end = blocks[-1].end_point[0] + 1
     metadata: dict[str, Any] = {
@@ -685,9 +695,10 @@ def _whole_file_chunk(
     language: str,
     repo_name: str,
     max_tokens: int = 512,
+    stored_path: str = "",
 ) -> list[Chunk]:
     """Return a single whole-file Chunk when no entity nodes are found."""
-    str_file_path = str(file_path)
+    str_file_path = stored_path or str(file_path)
     text = source.decode("utf-8", errors="replace")
     if not text.strip():
         return []
@@ -782,11 +793,19 @@ class CodeIndexer:
         ]
         stats.files_scanned = len(supported_files)
 
-        current_paths = {str(f) for f in supported_files}
+        # Paths are stored repo-relative (see `relative_to_repo`), so a chunk's
+        # file_path matches what GitHub reports in a PR diff.
+        rel_paths = {f: relative_to_repo(f, repo_path) for f in supported_files}
+        current_paths = set(rel_paths.values())
 
         # Detect removed files — scoped to this repo and to code extensions only.
         # Docs indexed by DocIndexer share the same repo namespace in MetadataDB, so
         # we must not treat a doc file as a "removed code file" here.
+        #
+        # This also migrates a repo indexed before paths were relative: every old
+        # absolute path is absent from `current_paths`, so it is removed here —
+        # deleting its now-orphaned chunks — and re-indexed below under its
+        # relative path. One expensive run, no manual reindex, no orphans.
         previously_indexed = set(self._meta.get_indexed_files_for_repo(repo_name))
         previously_code = {
             p for p in previously_indexed
@@ -803,7 +822,7 @@ class CodeIndexer:
         # later repo too. _index_chunks persists the file hash only after a
         # successful upsert, so a failed file is retried on the next run.
         for file_path in supported_files:
-            str_path = str(file_path)
+            str_path = rel_paths[file_path]
             try:
                 file_hash = self._hash_file(file_path)
 
@@ -821,6 +840,7 @@ class CodeIndexer:
                     include_doc_comments=self._config.include_doc_comments,
                     doc_comment_max_lines=self._config.doc_comment_max_lines,
                     index_file_headers=self._config.index_file_headers,
+                    stored_path=str_path,
                 )
                 if not chunks:
                     stats.files_empty += 1
