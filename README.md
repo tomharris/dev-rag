@@ -453,6 +453,16 @@ Two guards make this safe to expose:
 it is baked into the OAuth metadata and the GitHub redirect. Bind `127.0.0.1`
 and let Funnel terminate TLS in front of it.
 
+**The public port must be 443.** Funnel also permits 8443 and 10000, but
+Anthropic's connector infrastructure never opens a connection to those — the
+server logs stay completely empty and claude.ai reports only "Couldn't start
+signin", with no request to diagnose. If something else on the host already
+binds `0.0.0.0:443`, tailscaled can't claim the Tailscale interface either
+(`localListener failed to listen on <tailscale-ip>:443`) and Funnel silently
+reports "on" while publishing nothing — the node's public DNS record never
+appears. Rebind the conflicting service to loopback and your LAN address
+rather than moving Funnel to another port.
+
 Add the connector once at **claude.ai → Settings → Connectors → Add custom
 connector** using `https://<host>.<tailnet>.ts.net/mcp`; it then appears on iPad
 and in Claude Desktop. (New connectors can't be added from the mobile apps.)
