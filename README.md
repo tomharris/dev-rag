@@ -269,7 +269,8 @@ Code indexing is **incremental** — file content hashes are tracked in SQLite, 
 
 ```bash
 devrag status                              # Show index stats
-devrag serve                               # Start MCP server for Claude Code
+devrag serve                               # Start MCP server for Claude Code (stdio)
+devrag serve --transport http --read-only  # Serve the index to other machines over HTTP
 devrag reindex --all                       # Clear all indexes and re-embed code repos + their docs (re-sync PRs/issues/Jira/Slite/Slack manually)
 devrag reindex --name my_project           # Re-index a single repo's code + docs (preserves other repos and external sources)
 devrag config set embedding.model nomic-embed-text
@@ -355,6 +356,106 @@ claude mcp add devrag -- devrag serve
 # Or run on demand without installing:
 claude mcp add devrag -- uvx --from git+https://github.com/tomharris/dev-rag.git devrag serve
 ```
+
+### Sharing one index across machines
+
+`devrag serve` speaks stdio by default (one process per client, started by Claude
+Code). `--transport http` instead runs a long-lived server that other machines
+can query, so a second laptop or an iPad reuses the corpus you already indexed
+rather than indexing it again.
+
+```bash
+# On the machine that holds the index. Bind the Tailscale IP, not 0.0.0.0,
+# so the server is reachable from the tailnet and nowhere else.
+export DEVRAG_MCP_TOKEN=$(openssl rand -hex 32)
+devrag serve --transport http --host "$(tailscale ip -4)" --port 8765 --read-only
+```
+
+`--read-only` drops the `index_*`/`sync_*` tools from `tools/list`. Keep it on
+for anything reachable off-box: `index_repo` reads arbitrary paths on the host
+and the `sync_*` tools spend the host's GitHub, Jira and Slack tokens.
+
+Two more flags matter for networked serving:
+
+- `--auth` picks the scheme: `token` (default, shared bearer secret from
+  `$DEVRAG_MCP_TOKEN`), `none`, or `github` (see below).
+- `--prefer-repo` sets the repo that gets the soft `repo_boost`. Over HTTP it
+  defaults to *no* preference, because the server's working directory says
+  nothing about what a remote client is working on. Over stdio the cwd is the
+  caller's repo, so inference stays on.
+
+On a client machine, point Claude Code at it:
+
+```bash
+claude mcp add --transport http devrag http://100.x.y.z:8765/mcp \
+  --header "Authorization: Bearer $DEVRAG_MCP_TOKEN"
+```
+
+Claude Desktop reads `claude_desktop_config.json`, which only speaks stdio, so
+bridge it:
+
+```json
+{
+  "mcpServers": {
+    "devrag": {
+      "command": "npx",
+      "args": ["-y", "mcp-remote", "http://100.x.y.z:8765/mcp",
+               "--header", "Authorization: Bearer YOUR_TOKEN"]
+    }
+  }
+}
+```
+
+#### Why a tailnet is not enough for iPad
+
+Claude's **custom connectors** are brokered through your Claude account:
+[Anthropic's cloud infrastructure opens the connection, not your
+device](https://support.claude.com/en/articles/11175166-get-started-with-custom-connectors-using-remote-mcp)
+— and that is true of Claude Desktop and Cowork too, not just the mobile apps.
+A Tailscale-only URL is therefore unreachable for *every* connector, however
+well it works from your own machines.
+
+Mac and Linux escape this because Claude Code and `claude_desktop_config.json`
+run the MCP client locally. iPad has no local process, so the only route is a
+connector, and a connector needs a publicly reachable HTTPS endpoint. Public
+means real auth — hence `--auth github`:
+
+```bash
+# A GitHub OAuth app with callback https://<host>.<tailnet>.ts.net/auth/callback
+export DEVRAG_GITHUB_CLIENT_ID=Ov23li...
+export DEVRAG_GITHUB_CLIENT_SECRET=...
+
+tailscale funnel --bg 8765        # public HTTPS on https://<host>.<tailnet>.ts.net
+
+devrag serve --transport http --host 127.0.0.1 --port 8765 --read-only \
+  --auth github \
+  --public-url https://<host>.<tailnet>.ts.net \
+  --allow-user your-github-login
+```
+
+FastMCP proxies the OAuth flow to GitHub, including the dynamic client
+registration Claude requires, and advertises PKCE (S256) and the
+`authorization_code` + `refresh_token` grants at
+`/.well-known/oauth-authorization-server`. Registered clients persist under
+`~/.local/share/devrag/oauth-clients`, so restarting the server doesn't force
+every connector to re-authorize.
+
+Two guards make this safe to expose:
+
+- **`--allow-user` is mandatory.** GitHub OAuth proves *who* the caller is, not
+  that they may read your index. Without an allowlist, any GitHub account on
+  earth could pull your private code, Slack and Jira history out of the corpus.
+  Repeat the flag for more than one login.
+- **Redirects are pinned** to `https://claude.ai/api/mcp/auth_callback`. A
+  client that registers its own callback is refused at `/authorize`.
+
+`--public-url` must be the URL clients actually reach, not the bind address —
+it is baked into the OAuth metadata and the GitHub redirect. Bind `127.0.0.1`
+and let Funnel terminate TLS in front of it.
+
+Add the connector once at **claude.ai → Settings → Connectors → Add custom
+connector** using `https://<host>.<tailnet>.ts.net/mcp`; it then appears on iPad
+and in Claude Desktop. (New connectors can't be added from the mobile apps.)
 
 ### Skills
 

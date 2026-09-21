@@ -664,10 +664,80 @@ def auth_slack(
 
 
 @app.command()
-def serve():
-    """Start the MCP server."""
-    from devrag.mcp_server import mcp
-    mcp.run()
+def serve(
+    transport: str = typer.Option("stdio", "--transport", help="stdio (local, default) or http (network)"),
+    host: str = typer.Option("127.0.0.1", "--host", help="Bind address for --transport http. Use the machine's Tailscale IP to expose it to the tailnet only"),
+    port: int = typer.Option(8765, "--port", help="Port for --transport http"),
+    path: str = typer.Option("/mcp", "--path", help="HTTP path the MCP endpoint is served at"),
+    read_only: bool = typer.Option(False, "--read-only", help="Expose only search and status; hide the index/sync tools"),
+    auth: str = typer.Option("token", "--auth", help="none | token (shared bearer secret, for a private tailnet) | github (OAuth, required for a public endpoint / Claude connectors)"),
+    token_env: str = typer.Option("DEVRAG_MCP_TOKEN", "--token-env", help="Env var holding the bearer token for --auth token"),
+    public_url: str = typer.Option("", "--public-url", help="Externally visible base URL for --auth github, e.g. https://host.tailnet.ts.net. Must match what clients reach, not the bind address"),
+    allow_user: list[str] = typer.Option([], "--allow-user", help="GitHub login permitted to use the server (repeatable). Required for --auth github"),
+    prefer_repo: str = typer.Option("", "--prefer-repo", help="Repo to soft-boost when a client sends no --repo filter. Empty = no preference (the default over http, since the server's cwd is meaningless to a remote client)"),
+):
+    """Start the MCP server, over stdio (default) or HTTP for network clients."""
+    if transport not in ("stdio", "http"):
+        raise typer.BadParameter("transport must be 'stdio' or 'http'", param_hint="--transport")
+    if auth not in ("none", "token", "github"):
+        raise typer.BadParameter("auth must be 'none', 'token' or 'github'", param_hint="--auth")
+
+    from devrag.mcp_server import build_github_auth, configure_server, mcp
+
+    if transport == "stdio":
+        # cwd is the caller's repo, so keep inferring the boost from it; a stdio
+        # caller already owns the machine, so auth adds nothing.
+        configure_server(read_only=read_only, prefer_repo=None)
+        mcp.run()
+        return
+
+    auth_token = ""
+    auth_provider = None
+    middleware: tuple = ()
+    label = "no auth"
+
+    if auth == "token":
+        auth_token = os.environ.get(token_env, "") if token_env else ""
+        label = "token auth" if auth_token else "no auth"
+    elif auth == "github":
+        client_id = os.environ.get("DEVRAG_GITHUB_CLIENT_ID", "")
+        client_secret = os.environ.get("DEVRAG_GITHUB_CLIENT_SECRET", "")
+        missing = [
+            name for name, value in (
+                ("$DEVRAG_GITHUB_CLIENT_ID", client_id),
+                ("$DEVRAG_GITHUB_CLIENT_SECRET", client_secret),
+                ("--public-url", public_url),
+                ("--allow-user", ",".join(allow_user)),
+            ) if not value
+        ]
+        if missing:
+            raise typer.BadParameter(
+                f"--auth github requires {', '.join(missing)}", param_hint="--auth"
+            )
+        if not public_url.startswith("https://"):
+            # Claude's connector infrastructure will not talk to plain HTTP, and
+            # the OAuth metadata this URL is baked into has to match.
+            raise typer.BadParameter("--public-url must be https://", param_hint="--public-url")
+        auth_provider, allowlist = build_github_auth(
+            client_id, client_secret, public_url, allow_user,
+        )
+        middleware = (allowlist,)
+        label = f"github oauth ({', '.join(allow_user)})"
+
+    if host == "0.0.0.0" and auth == "none":  # noqa: S104 - explicit user choice, warned about
+        typer.echo(
+            "Warning: binding 0.0.0.0 with --auth none. Bind the Tailscale IP "
+            "(tailscale ip -4) or use --auth token so this isn't reachable from the LAN.",
+            err=True,
+        )
+    if auth == "token" and not auth_token:
+        typer.echo(f"Warning: --auth token but ${token_env} is empty; serving unauthenticated.", err=True)
+
+    configure_server(read_only=read_only, auth_token=auth_token, prefer_repo=prefer_repo,
+                     auth_provider=auth_provider, middleware=middleware)
+    typer.echo(f"DevRAG MCP on http://{host}:{port}{path} "
+               f"({'read-only' if read_only else 'read-write'}, {label})", err=True)
+    mcp.run(transport="http", host=host, port=port, path=path)
 
 
 eval_app = typer.Typer(help="Evaluate retrieval quality.")

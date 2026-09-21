@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Iterable
 from pathlib import Path
 
 from fastmcp import FastMCP
+from fastmcp.exceptions import AuthorizationError
+from fastmcp.server.dependencies import get_access_token
+from fastmcp.server.middleware import Middleware
 
 from devrag.config import DevragConfig, load_config
 from devrag.ingest.code_indexer import CodeIndexer
@@ -38,6 +42,11 @@ _metadata_db: MetadataDB | None = None
 _embedder: OllamaEmbedder | None = None
 _sparse_encoder: BM25SparseEncoder | None = None
 _reranker: Reranker | None = None
+# None = infer the preferred repo from the server's cwd (correct for a local
+# stdio server, which runs inside the repo the caller is working in). Network
+# serving sets this explicitly: the daemon's cwd says nothing about what a
+# remote client is working on, so an inferred boost would be arbitrary.
+_default_prefer_repo: str | None = None
 
 
 def _get_config() -> DevragConfig:
@@ -181,7 +190,11 @@ def search(
     # When no explicit repo filter is given, softly prefer the repo the server runs in.
     prefer_repo = ""
     if not repo and config.retrieval.repo_boost:
-        prefer_repo = infer_repo(Path.cwd(), _get_metadata_db().get_all_repos())
+        prefer_repo = (
+            _default_prefer_repo
+            if _default_prefer_repo is not None
+            else infer_repo(Path.cwd(), _get_metadata_db().get_all_repos())
+        )
     timings: dict = {}
     results = search_rank_dedupe(hybrid, reranker, query, collections, where, config, final_k,
                                  prefer_repo, timings=timings,
@@ -572,6 +585,126 @@ def status() -> str:
         lines.append(f"Queries logged: {stats['total_queries']}")
         lines.append(f"Avg latency: {stats['avg_total_ms']:.0f}ms")
     return "\n".join(lines)
+
+
+# Tools that mutate the index or reach out to external services with the
+# server's own credentials. Over stdio the caller already owns the machine, so
+# this distinction is academic; over HTTP it is the whole security boundary —
+# `index_repo` reads any path on the host and `sync_*` spends the host's GitHub
+# / Jira / Slack tokens. `--read-only` unregisters them entirely rather than
+# gating them at call time, so they don't even appear in `tools/list`.
+WRITE_TOOLS = (
+    "index_repo",
+    "index_docs",
+    "refresh",
+    "sync_prs",
+    "sync_issues",
+    "sync_jira",
+    "sync_slite",
+    "sync_slack",
+    "sync_sessions",
+)
+
+
+# Anthropic's cloud — not the user's device — opens the connection to a remote
+# MCP connector, for every Claude client including the desktop app. So a
+# tailnet-only URL can never back a connector; the server has to be publicly
+# reachable, which makes real OAuth mandatory rather than optional. GitHub is
+# the upstream identity provider: FastMCP proxies the OAuth flow (including the
+# dynamic client registration Claude requires) to a GitHub OAuth app, and the
+# allowlist below narrows "any GitHub user" down to the accounts that may read
+# this index.
+class GitHubUserAllowlist(Middleware):
+    """Reject authenticated requests from GitHub logins outside the allowlist.
+
+    GitHub OAuth proves *who* the caller is, not that they should have access.
+    Without this, publishing the server would hand the entire indexed corpus —
+    private code, Slack, Jira, session logs — to anyone with a GitHub account.
+    """
+
+    def __init__(self, logins: Iterable[str]) -> None:
+        self._logins = {login.lower() for login in logins if login}
+        if not self._logins:
+            raise ValueError("GitHub auth requires at least one allowed login")
+
+    async def on_message(self, context, call_next):
+        token = get_access_token()
+        login = str((token.claims.get("login") or "") if token else "").lower()
+        if login not in self._logins:
+            # Deliberately vague: don't confirm which logins are allowed.
+            raise AuthorizationError(f"GitHub user {login or '<unknown>'} is not authorized")
+        return await call_next(context)
+
+
+def build_github_auth(
+    client_id: str,
+    client_secret: str,
+    public_url: str,
+    allowed_logins: Iterable[str],
+    storage_dir: Path | None = None,
+):
+    """Build the (auth provider, allowlist middleware) pair for public serving.
+
+    `public_url` is the externally visible base URL (e.g. the Tailscale Funnel
+    hostname), not the bind address — it is what the OAuth metadata advertises
+    and what GitHub redirects back to, so it must match exactly.
+    """
+    from fastmcp.server.auth.providers.github import GitHubProvider
+    from key_value.aio.stores.filetree import FileTreeStore
+
+    storage_dir = storage_dir or Path("~/.local/share/devrag/oauth-clients").expanduser()
+    storage_dir.mkdir(parents=True, exist_ok=True)
+
+    auth = GitHubProvider(
+        client_id=client_id,
+        client_secret=client_secret,
+        base_url=public_url.rstrip("/"),
+        # Claude's connector completes the flow at a fixed Anthropic callback.
+        allowed_client_redirect_uris=["https://claude.ai/api/mcp/auth_callback"],
+        # Clients register dynamically; persist them so a server restart doesn't
+        # invalidate the connector and force re-authorization on every client.
+        client_storage=FileTreeStore(data_directory=storage_dir),
+    )
+    return auth, GitHubUserAllowlist(allowed_logins)
+
+
+def configure_server(
+    read_only: bool = False,
+    auth_token: str = "",
+    prefer_repo: str | None = None,
+    auth_provider=None,
+    middleware=(),
+) -> None:
+    """Apply network-serving policy to the module-level `mcp` singleton.
+
+    Called by `devrag serve` before `mcp.run()`. Kept here rather than in the
+    CLI so the tool list and the auth provider are configured next to the tools
+    they govern.
+    """
+    global _default_prefer_repo
+
+    if read_only:
+        for name in WRITE_TOOLS:
+            mcp.local_provider.remove_tool(name)
+
+    if auth_token:
+        from fastmcp.server.auth.providers.jwt import StaticTokenVerifier
+
+        # Shared-secret bearer auth, not OAuth. Appropriate because the intended
+        # deployment is a private tailnet where Tailscale ACLs are the primary
+        # control and this is defence in depth against anything else that lands
+        # on the host. A public deployment needs a real OAuth provider instead.
+        mcp.auth = StaticTokenVerifier(
+            tokens={auth_token: {"client_id": "devrag", "scopes": []}},
+        )
+
+    if auth_provider is not None:
+        mcp.auth = auth_provider
+    for mw in middleware:
+        mcp.add_middleware(mw)
+
+    if prefer_repo is not None:
+        _default_prefer_repo = prefer_repo
 
 
 if __name__ == "__main__":
