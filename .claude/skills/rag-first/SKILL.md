@@ -1,17 +1,17 @@
 ---
 name: rag-first
-description: Use when the user asks ANY question about the codebase - how code works, where something is defined, why something changed, what a module does, how components connect, or any query that would normally trigger Grep/Glob/Explore/Agent exploration. This skill MUST be invoked BEFORE any codebase exploration tools.
+description: Use when the user asks ANY question about the codebase or asks to explore, investigate, or discover something in it - how code works, where something is defined, why something changed, what a module does, how components connect. MUST be invoked BEFORE any exploration tool, including Grep/Glob/Explore/Agent AND Bash grep/rg/find/git grep/git log. Skip only for a literal lookup of a known symbol or string.
 ---
 
 # RAG-First Codebase Search
 
-Before using Grep, Glob, Explore agents, or other codebase exploration tools, ALWAYS search DevRAG first. The RAG index has semantic understanding of code structure, PR history, and documentation that keyword search misses.
+Before using Grep, Glob, Explore agents, Bash `grep`/`rg`/`find`/`git grep`, or other codebase exploration tools, ALWAYS search DevRAG first. The RAG index has semantic understanding of code structure, PR history, and documentation that keyword search misses.
 
 ## Process
 
 1. **Formulate a search query** from the user's question. Use natural language — DevRAG uses semantic search, not keyword matching. Include key terms but phrase it as a question or description.
 
-2. **Call `mcp__devrag__search`** with your query.
+2. **Call `mcp__devrag__search`** with your query. If it is listed only as a deferred tool, load it first with ToolSearch `select:mcp__devrag__search`.
 
 3. **Evaluate the results:**
    - If results are relevant and sufficient — present them grouped by source type (code, PR, doc). Show file paths, snippets, PR numbers, and document sections.
